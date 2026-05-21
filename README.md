@@ -70,6 +70,19 @@ npm install
 npm run dev
 ```
 
+### Production (Vercel)
+
+| App | URL |
+|-----|-----|
+| Web | https://web-seven-smoky-94.vercel.app |
+| API | https://market-advisor-api.vercel.app |
+
+Redeploy: `bash scripts/deploy-vercel.sh` (uses `bunx vercel`)
+
+In **Supabase → Authentication → URL Configuration**, set Site URL and Redirect URLs to your Vercel web URL (e.g. `https://web-seven-smoky-94.vercel.app/**`).
+
+### Local
+
 Open [http://localhost:3000](http://localhost:3000) — you will be redirected to **login**.
 
 **Default admin** (create once with `python scripts/seed_admin_user.py` using `api/.venv/bin/python`):

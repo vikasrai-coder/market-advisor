@@ -1,9 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "builds": [{ "src": "main.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/(.*)", "dest": "main.py" }],
+  "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
-    "main.py": {
+    "api/index.py": {
       "maxDuration": 300,
       "memory": 1024
     }
