@@ -12,6 +12,7 @@ export function Dashboard() {
   const [tradeDate, setTradeDate] = useState<string | null>(null);
   const [status, setStatus] = useState<{ supabase: boolean; huggingface: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -37,7 +38,10 @@ export function Dashboard() {
   return (
     <>
       <section className="mb-8 flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-        <RunAnalysisButton onComplete={load} />
+        <RunAnalysisButton
+          onComplete={load}
+          onLoadingChange={setLoading}
+        />
         <div className="flex flex-wrap gap-3 text-xs">
           <StatusBadge ok={status?.supabase} label="Supabase" />
           <StatusBadge ok={status?.huggingface} label="Hugging Face" />
@@ -55,17 +59,27 @@ export function Dashboard() {
         </div>
       )}
 
-      {recs.length === 0 && !error ? (
-        <p className="text-slate-500">
-          No recommendations yet. Click &quot;Run daily analysis&quot; to score 40 stocks and get 10 buy picks.
-        </p>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {recs.map((rec) => (
-            <RecommendationCard key={rec.id} rec={rec} />
-          ))}
-        </div>
-      )}
+      <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-slate-950/70 backdrop-blur-sm min-h-[120px]">
+            <p className="text-sm text-slate-300">Updating results when analysis finishes…</p>
+          </div>
+        )}
+        {recs.length === 0 && !error ? (
+          <p className="text-slate-500">
+            No recommendations yet. Click &quot;Run daily analysis&quot; to score 90+ NSE stocks (large, mid &amp; small cap) and get 10 buy picks.
+          </p>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {recs.map((rec) => (
+              <RecommendationCard
+                key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`}
+                rec={rec}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       <section className="mt-12">
         <h2 className="mb-4 text-xl font-semibold text-white">Buy signals (plan for next session)</h2>

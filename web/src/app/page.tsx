@@ -5,12 +5,12 @@ export default function HomePage() {
     <div className="mx-auto max-w-6xl px-4 py-10">
       <section className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          Today&apos;s top 10 stocks to buy
+          Top 10 NSE stocks to buy today
         </h1>
         <p className="mt-2 max-w-2xl text-slate-400">
-          AI-powered picks from trend analysis, technical indicators (RSI, MACD, moving averages),
-          FinBERT news sentiment, and Hugging Face reasoning — signals generated today for
-          tomorrow&apos;s trading plan.
+          Scans NSE large, mid, and small cap stocks via Yahoo Finance — trend, RSI/MACD/SMA,
+          news sentiment via Hugging Face, and AI reasoning. Signals are for the next trading session
+          (NSE/BSE).
         </p>
       </section>
       <Dashboard />

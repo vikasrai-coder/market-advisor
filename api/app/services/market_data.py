@@ -3,16 +3,26 @@ from typing import Any
 import yfinance as yf
 
 from app.config import settings
+from app.symbols import display_symbol, normalize_symbol
+from app.watchlists import get_cap_segment
 
 
 def fetch_stock_profile(symbol: str) -> dict[str, Any]:
+    symbol = normalize_symbol(symbol)
     ticker = yf.Ticker(symbol)
     info = ticker.info or {}
+    exchange = info.get("exchange") or ("NSE" if symbol.endswith(".NS") else "BSE" if symbol.endswith(".BO") else "IN")
+    currency = info.get("currency") or "INR"
     return {
         "symbol": symbol,
-        "name": info.get("longName") or info.get("shortName") or symbol,
+        "display_symbol": display_symbol(symbol),
+        "name": info.get("longName") or info.get("shortName") or display_symbol(symbol),
         "sector": info.get("sector"),
         "industry": info.get("industry"),
+        "exchange": exchange,
+        "currency": currency,
+        "market": settings.market,
+        "cap_segment": get_cap_segment(symbol),
         "market_cap": info.get("marketCap"),
         "pe_ratio": info.get("trailingPE"),
         "dividend_yield": info.get("dividendYield"),
@@ -23,10 +33,17 @@ def fetch_stock_profile(symbol: str) -> dict[str, Any]:
 
 
 def fetch_price_history(symbol: str, period: str = "6mo") -> Any:
-    return yf.Ticker(symbol).history(period=period, auto_adjust=True)
+    symbol = normalize_symbol(symbol)
+    history = yf.Ticker(symbol).history(period=period, auto_adjust=True)
+    if history.empty and symbol.endswith(".NS"):
+        # Fallback: some tickers resolve better on BSE
+        alt = symbol.replace(".NS", ".BO")
+        history = yf.Ticker(alt).history(period=period, auto_adjust=True)
+    return history
 
 
 def fetch_news(symbol: str, limit: int = 8) -> list[dict[str, Any]]:
+    symbol = normalize_symbol(symbol)
     ticker = yf.Ticker(symbol)
     articles: list[dict[str, Any]] = []
     for item in (ticker.news or [])[:limit]:
@@ -57,4 +74,4 @@ def _ts(value: Any) -> str | None:
 
 
 def get_watchlist() -> list[str]:
-    return settings.watchlist
+    return [normalize_symbol(s) for s in settings.watchlist]

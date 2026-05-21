@@ -1,7 +1,5 @@
 -- Market Advisor: stocks, news, metrics, recommendations, signals
 
-create extension if not exists "uuid-ossp";
-
 create table if not exists stocks (
   symbol text primary key,
   name text,
@@ -17,7 +15,7 @@ create table if not exists stocks (
 );
 
 create table if not exists news_articles (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   symbol text references stocks(symbol) on delete cascade,
   title text not null,
   summary text,
@@ -33,7 +31,7 @@ create index if not exists idx_news_symbol on news_articles(symbol);
 create index if not exists idx_news_published on news_articles(published_at desc);
 
 create table if not exists stock_metrics (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   symbol text references stocks(symbol) on delete cascade,
   price numeric,
   change_pct numeric,
@@ -51,7 +49,7 @@ create table if not exists stock_metrics (
 create index if not exists idx_metrics_symbol_time on stock_metrics(symbol, recorded_at desc);
 
 create table if not exists analysis_runs (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   status text not null default 'running',
   stocks_analyzed int default 0,
   recommendations_count int default 0,
@@ -61,7 +59,7 @@ create table if not exists analysis_runs (
 );
 
 create table if not exists recommendations (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   run_id uuid references analysis_runs(id) on delete set null,
   symbol text references stocks(symbol) on delete cascade,
   rank int not null check (rank between 1 and 10),
@@ -82,7 +80,7 @@ create table if not exists recommendations (
 create index if not exists idx_recommendations_trade on recommendations(trade_date desc);
 
 create table if not exists trading_signals (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   run_id uuid references analysis_runs(id) on delete set null,
   symbol text references stocks(symbol) on delete cascade,
   signal_type text not null check (signal_type in ('buy', 'sell', 'hold')),

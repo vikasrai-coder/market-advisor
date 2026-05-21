@@ -9,10 +9,22 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from app.config import settings
-from app.services import analyzer
+from app.watchlists import watchlist_summary
+from app import analysis_jobs
+from app.services import analyzer, market_data
 from app.services.supabase_store import get_client
+from app.symbols import normalize_symbol
 
+IS_VERCEL = bool(os.getenv("VERCEL"))
 scheduler = BackgroundScheduler()
+
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 def _scheduled_analysis() -> None:
@@ -24,7 +36,7 @@ def _scheduled_analysis() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if os.getenv("ENABLE_SCHEDULER", "true").lower() == "true":
+    if not IS_VERCEL and os.getenv("ENABLE_SCHEDULER", "true").lower() == "true":
         scheduler.add_job(_scheduled_analysis, "cron", hour=18, minute=0, id="daily_analysis")
         scheduler.start()
     yield
@@ -41,7 +53,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,6 +65,11 @@ app.add_middleware(
 def health():
     return {
         "status": "ok",
+        "market": settings.market,
+        "exchange": "NSE (Yahoo Finance .NS symbols)",
+        "data_provider": "yfinance",
+        "watchlist_size": len(settings.watchlist),
+        "watchlist_segments": watchlist_summary(),
         "supabase": bool(settings.supabase_url and settings.supabase_service_role_key),
         "huggingface": bool(settings.hf_token),
     }
@@ -59,17 +77,62 @@ def health():
 
 @app.post("/api/analysis/run")
 def run_analysis():
-    try:
-        return analyzer.run_full_analysis()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if IS_VERCEL:
+        try:
+            result = analyzer.run_full_analysis()
+            return {
+                "job_id": "vercel-sync",
+                "status": "completed",
+                "message": "Analysis complete",
+                "result": result,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    running = analysis_jobs.get_running_job()
+    if running:
+        return {
+            "job_id": running["job_id"],
+            "status": "running",
+            "message": "Analysis already in progress",
+        }
+    job_id = analysis_jobs.start_job()
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "message": "Analysis started. Poll /api/analysis/status/{job_id} for progress.",
+    }
+
+
+@app.get("/api/analysis/status/{job_id}")
+def analysis_status(job_id: str):
+    job = analysis_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/api/analysis/active")
+def analysis_active():
+    job = analysis_jobs.get_running_job()
+    return job or {"status": "idle"}
 
 
 @app.get("/api/recommendations")
 def list_recommendations(trade_date: str | None = None):
     client = get_client()
     if not client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
+        cached = analyzer.get_last_result()
+        if not cached:
+            return {"recommendations": [], "trade_date": None, "source": "memory"}
+        recs = cached.get("top_recommendations") or []
+        if trade_date:
+            recs = [r for r in recs if r.get("trade_date") == trade_date]
+        return {
+            "recommendations": recs,
+            "trade_date": cached.get("trade_date"),
+            "source": "memory",
+        }
     target_date = trade_date
     if not target_date:
         latest = (
@@ -96,7 +159,13 @@ def list_recommendations(trade_date: str | None = None):
 def list_signals(planned_trade_date: str | None = None, signal_type: str | None = None):
     client = get_client()
     if not client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
+        cached = analyzer.get_last_result()
+        signals = (cached or {}).get("signals") or []
+        if planned_trade_date:
+            signals = [s for s in signals if s.get("planned_trade_date") == planned_trade_date]
+        if signal_type:
+            signals = [s for s in signals if s.get("signal_type") == signal_type]
+        return {"signals": signals, "source": "memory"}
     query = client.table("trading_signals").select("*, stocks(name, sector)").order("created_at", desc=True)
     if planned_trade_date:
         query = query.eq("planned_trade_date", planned_trade_date)
@@ -108,10 +177,27 @@ def list_signals(planned_trade_date: str | None = None, signal_type: str | None 
 
 @app.get("/api/stocks/{symbol}")
 def stock_detail(symbol: str):
+    sym = normalize_symbol(symbol)
     client = get_client()
-    sym = symbol.upper()
     if not client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
+        profile = market_data.fetch_stock_profile(sym)
+        history = market_data.fetch_price_history(sym, "3mo")
+        from app.services.technicals import compute_indicators
+
+        metrics_row = compute_indicators(history)
+        news = market_data.fetch_news(sym, 10)
+        cached = analyzer.get_last_result() or {}
+        latest = next(
+            (r for r in cached.get("top_recommendations") or [] if r.get("symbol") == sym),
+            None,
+        )
+        return {
+            "stock": profile,
+            "metrics": [metrics_row] if metrics_row.get("price") else [],
+            "news": news,
+            "latest_recommendation": latest,
+            "source": "yfinance",
+        }
     stock = client.table("stocks").select("*").eq("symbol", sym).maybe_single().execute()
     metrics = (
         client.table("stock_metrics")

@@ -1,6 +1,6 @@
 # Market Advisor
 
-AI stock buy recommendation platform that automatically produces **10 daily buy picks** using trend analysis, technical indicators, news sentiment, and Hugging Face LLM reasoning. Buy/sell signals are generated **today for tomorrow's** trading plan.
+AI **Indian stock** (NSE) buy recommendation platform that automatically produces **10 daily buy picks** using Yahoo Finance data, trend analysis, technical indicators, news sentiment, and Hugging Face LLM reasoning. Buy/sell signals are generated **today for tomorrow's** NSE/BSE session.
 
 ## Stack
 
@@ -10,11 +10,12 @@ AI stock buy recommendation platform that automatically produces **10 daily buy 
 | API | Python FastAPI |
 | AI | Hugging Face Inference API (FinBERT + Zephyr) |
 | Database | Supabase (Postgres) |
-| Market data | yfinance (free) |
+| Market data | Yahoo Finance via `yfinance` (NSE `.NS` symbols, INR) |
 
 ## Features
 
-- Scores 40 liquid US stocks on trend, RSI/MACD/SMA, and news sentiment
+- Scores **90+ NSE stocks** across large, mid, and small cap (e.g. `RELIANCE.NS`, `INDIGO.NS`, `CDSL.NS`) on trend, RSI/MACD/SMA, and news sentiment
+- Top 10 picks are diversified: ~4 large, ~3 mid, ~3 small cap (best scores per segment)
 - Ranks top **10 BUY** recommendations with AI-written reasoning
 - **Buy/sell signals** with planned trade date = next market day
 - Stores stocks, metrics, news, recommendations, and signals in Supabase
@@ -69,7 +70,14 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and click **Run daily analysis**.
+Open [http://localhost:3000](http://localhost:3000) — you will be redirected to **login**.
+
+**Default admin** (create once with `python scripts/seed_admin_user.py` using `api/.venv/bin/python`):
+
+- Email: `admin@market.in`
+- Password: set via `ADMIN_PASSWORD` in `api/.env`
+
+Then click **Run daily analysis**.
 
 ## API endpoints
 

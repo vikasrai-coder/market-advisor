@@ -10,9 +10,21 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <span className="text-xs font-medium text-emerald-400">#{rec.rank} BUY</span>
-          <h3 className="mt-1 text-xl font-bold text-white">{rec.symbol}</h3>
-          <p className="text-sm text-slate-400">{stock?.name ?? rec.symbol}</p>
+          <span className="text-xs font-medium text-emerald-400">
+            #{rec.rank} BUY
+            {rec.cap_segment && (
+              <span className="ml-1.5 rounded bg-slate-800 px-1.5 py-0.5 text-slate-400 capitalize">
+                {rec.cap_segment}
+              </span>
+            )}
+          </span>
+          <h3 className="mt-1 text-xl font-bold text-white">
+            {rec.symbol.replace(".NS", "").replace(".BO", "")}
+          </h3>
+          <p className="text-sm text-slate-400">
+            {stock?.name ?? rec.symbol}
+            <span className="ml-1 text-slate-600">· NSE</span>
+          </p>
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold text-emerald-400">{rec.composite_score}</p>
@@ -27,8 +39,8 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
       </div>
       {rec.key_factors?.length > 0 && (
         <ul className="mt-3 flex flex-wrap gap-1.5">
-          {rec.key_factors.slice(0, 3).map((f) => (
-            <li key={f} className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
+          {rec.key_factors.slice(0, 3).map((f, i) => (
+            <li key={`${rec.symbol}-factor-${i}`} className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
               {f}
             </li>
           ))}

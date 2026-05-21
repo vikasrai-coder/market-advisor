@@ -5,6 +5,33 @@ from supabase import Client, create_client
 
 from app.config import settings
 
+STOCK_COLUMNS = {
+    "symbol", "name", "sector", "industry", "market_cap", "pe_ratio",
+    "dividend_yield", "beta", "fifty_two_week_high", "fifty_two_week_low",
+    "cap_segment", "exchange", "currency",
+}
+RECOMMENDATION_COLUMNS = {
+    "id", "run_id", "symbol", "rank", "action", "composite_score", "trend_score",
+    "news_score", "technical_score", "ai_confidence", "reasoning", "key_factors",
+    "signal_date", "trade_date", "cap_segment",
+}
+SIGNAL_COLUMNS = {
+    "id", "run_id", "symbol", "signal_type", "strength", "price_at_signal",
+    "target_price", "stop_loss", "rationale", "signal_date", "planned_trade_date",
+}
+NEWS_COLUMNS = {
+    "symbol", "title", "summary", "url", "source", "sentiment_label",
+    "sentiment_score", "published_at",
+}
+METRIC_COLUMNS = {
+    "symbol", "price", "change_pct", "volume", "rsi", "macd", "macd_signal",
+    "sma_20", "sma_50", "trend_score", "volatility",
+}
+
+
+def _pick(data: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
+    return {k: v for k, v in data.items() if k in allowed and v is not None}
+
 
 def get_client() -> Client | None:
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -30,16 +57,17 @@ def complete_run(client: Client, run_id: str, stocks: int, recs: int, error: str
 
 
 def upsert_stock(client: Client, data: dict[str, Any]) -> None:
-    client.table("stocks").upsert(data).execute()
+    client.table("stocks").upsert(_pick(data, STOCK_COLUMNS)).execute()
 
 
 def insert_news(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
-        client.table("news_articles").insert(rows).execute()
+        cleaned = [_pick(r, NEWS_COLUMNS) for r in rows]
+        client.table("news_articles").insert(cleaned).execute()
 
 
 def insert_metrics(client: Client, row: dict[str, Any]) -> None:
-    client.table("stock_metrics").insert(row).execute()
+    client.table("stock_metrics").insert(_pick(row, METRIC_COLUMNS)).execute()
 
 
 def clear_recommendations_for_date(client: Client, signal_date: date) -> None:
@@ -48,7 +76,8 @@ def clear_recommendations_for_date(client: Client, signal_date: date) -> None:
 
 def insert_recommendations(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
-        client.table("recommendations").insert(rows).execute()
+        cleaned = [_pick(r, RECOMMENDATION_COLUMNS) for r in rows]
+        client.table("recommendations").insert(cleaned).execute()
 
 
 def clear_signals_for_date(client: Client, signal_date: date) -> None:
@@ -57,4 +86,5 @@ def clear_signals_for_date(client: Client, signal_date: date) -> None:
 
 def insert_signals(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
-        client.table("trading_signals").insert(rows).execute()
+        cleaned = [_pick(r, SIGNAL_COLUMNS) for r in rows]
+        client.table("trading_signals").insert(cleaned).execute()
