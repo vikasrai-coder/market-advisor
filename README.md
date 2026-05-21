@@ -1,0 +1,95 @@
+# Market Advisor
+
+AI stock buy recommendation platform that automatically produces **10 daily buy picks** using trend analysis, technical indicators, news sentiment, and Hugging Face LLM reasoning. Buy/sell signals are generated **today for tomorrow's** trading plan.
+
+## Stack
+
+| Layer | Tech |
+|-------|------|
+| Frontend | Next.js 16, Tailwind |
+| API | Python FastAPI |
+| AI | Hugging Face Inference API (FinBERT + Zephyr) |
+| Database | Supabase (Postgres) |
+| Market data | yfinance (free) |
+
+## Features
+
+- Scores 40 liquid US stocks on trend, RSI/MACD/SMA, and news sentiment
+- Ranks top **10 BUY** recommendations with AI-written reasoning
+- **Buy/sell signals** with planned trade date = next market day
+- Stores stocks, metrics, news, recommendations, and signals in Supabase
+- Daily cron at 6:00 PM (API scheduler) or manual "Run daily analysis"
+
+## Quick start
+
+### 1. Supabase
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. In SQL Editor, run `supabase/migrations/001_initial.sql`.
+3. Copy **Project URL**, **anon key**, and **service role key**.
+
+### 2. Hugging Face
+
+1. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with **Inference** access.
+2. Optional: accept the license for `HuggingFaceH4/zephyr-7b-beta` on the model page.
+
+### 3. Environment
+
+```bash
+cp .env.example api/.env
+cp .env.example web/.env.local
+```
+
+Edit both files with your keys:
+
+```env
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+HF_TOKEN=hf_...
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+### 4. API
+
+```bash
+cd api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+### 5. Web
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) and click **Run daily analysis**.
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Service status |
+| POST | `/api/analysis/run` | Run full analysis (10 buys + signals) |
+| GET | `/api/recommendations` | Latest top 10 buys |
+| GET | `/api/signals` | Buy/sell signals |
+| GET | `/api/stocks/{symbol}` | Stock profile, metrics, news |
+
+## How scoring works
+
+**Composite score** = 40% trend + 35% technical + 25% news sentiment
+
+- **Trend**: price vs SMA20/SMA50, RSI zone, MACD crossover
+- **Technical**: momentum and daily change
+- **News**: FinBERT (`ProsusAI/finbert`) on recent headlines
+- **AI insight**: Hugging Face chat model summarizes each top pick
+
+## Disclaimer
+
+This tool is for **education and research only**. It is not financial advice. Past patterns do not guarantee future returns. Always do your own due diligence.
