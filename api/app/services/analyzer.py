@@ -35,6 +35,13 @@ def run_full_analysis(
         if progress_callback:
             progress_callback(done, total, phase, message)
 
+    # Reconcile past outcomes
+    try:
+        from app.services.reconciler import reconcile_recommendations
+        reconcile_recommendations()
+    except Exception:
+        pass
+
     client = get_client()
     signal_date = date.today()
 
@@ -135,6 +142,9 @@ def run_full_analysis(
             "key_factors": insight.get("key_factors", []),
             "signal_date": signal_date.isoformat(),
             "trade_date": trade_date.isoformat(),
+            "target_price": target_price,
+            "stop_loss": stop_loss,
+            "performance_status": "pending",
             # Mode-specific extra fields
             "vwap": item["metrics"].get("vwap"),
             "bullish_crossover": item["metrics"].get("bullish_crossover"),
@@ -142,6 +152,13 @@ def run_full_analysis(
             "range_52w_pct": item["metrics"].get("range_52w_pct"),
             "pe_ratio": item["metrics"].get("pe_ratio"),
             "dividend_yield": item["metrics"].get("dividend_yield"),
+            # Dynamic stock sub-object for local/memory fallback completeness
+            "stocks": {
+                "name": item["profile"].get("name"),
+                "sector": item["profile"].get("sector"),
+                "pe_ratio": item["profile"].get("pe_ratio"),
+                "market_cap": item["profile"].get("market_cap"),
+            },
         }
         recommendations.append(rec)
         signals.append(

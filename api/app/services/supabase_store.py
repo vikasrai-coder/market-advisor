@@ -14,6 +14,7 @@ RECOMMENDATION_COLUMNS = {
     "id", "run_id", "symbol", "rank", "action", "composite_score", "trend_score",
     "news_score", "technical_score", "ai_confidence", "reasoning", "key_factors",
     "signal_date", "trade_date", "cap_segment", "trade_mode",
+    "target_price", "stop_loss", "performance_status", "exit_price",
 }
 SIGNAL_COLUMNS = {
     "id", "run_id", "symbol", "signal_type", "strength", "price_at_signal",

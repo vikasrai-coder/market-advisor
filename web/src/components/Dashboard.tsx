@@ -13,6 +13,7 @@ import { RecommendationCard } from "./RecommendationCard";
 import { RunAnalysisButton } from "./RunAnalysisButton";
 import { SignalList } from "./SignalList";
 import { ModeSelector } from "./ModeSelector";
+import { SectorHeatmap } from "./SectorHeatmap";
 
 export function Dashboard() {
   const [mode, setMode] = useState<TradeMode>("swing");
@@ -22,7 +23,8 @@ export function Dashboard() {
     return tomorrow.toISOString().split("T")[0];
   });
   const [recs, setRecs] = useState<Recommendation[]>([]);
-  const [signals, setSignals] = useState<TradingSignal[]>([]);
+  const [allSignals, setAllSignals] = useState<TradingSignal[]>([]);
+  const [signalTypeFilter, setSignalTypeFilter] = useState<"buy" | "sell">("buy");
   const [tradeDate, setTradeDate] = useState<string | null>(null);
   const [status, setStatus] = useState<{ supabase: boolean; huggingface: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export function Dashboard() {
       ]);
       setRecs(recData.recommendations ?? []);
       setTradeDate(recData.trade_date ?? null);
-      setSignals((sigData.signals ?? []).filter((s) => s.signal_type === "buy").slice(0, 10));
+      setAllSignals(sigData.signals ?? []);
       if (health) setStatus({ supabase: health.supabase, huggingface: health.huggingface });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load data — is the API running?");
@@ -51,17 +53,14 @@ export function Dashboard() {
   }, [load]);
 
   const getSignalsTitle = () => {
-    switch (mode) {
-      case "intraday":
-        return "Buy signals (plan same-day entry)";
-      case "longterm":
-        return "Buy signals (plan 1-6 month holds)";
-      case "future":
-        return `Buy signals (planned setups for ${targetDate})`;
-      case "swing":
-      default:
-        return "Buy signals (plan for next session)";
-    }
+    const timeLabel =
+      mode === "intraday"
+        ? "same-day"
+        : mode === "future"
+        ? `setup for ${targetDate}`
+        : "next session";
+    const dirLabel = signalTypeFilter === "buy" ? "Bullish Momentum Buys" : "Bearish Breakdown Shorts";
+    return `${dirLabel} (${timeLabel})`;
   };
 
   const getEmptyStateText = () => {
@@ -77,6 +76,8 @@ export function Dashboard() {
         return "No recommendations yet. Click 'Run Swing Trade Analysis' to score stocks and get 10 buy picks.";
     }
   };
+
+  const filteredSignals = allSignals.filter((s) => s.signal_type === signalTypeFilter).slice(0, 15);
 
   return (
     <>
@@ -114,6 +115,8 @@ export function Dashboard() {
         </div>
       )}
 
+      {!loading && recs.length > 0 && <SectorHeatmap recs={recs} />}
+
       <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-slate-950/70 backdrop-blur-sm min-h-[120px]">
@@ -136,9 +139,35 @@ export function Dashboard() {
         )}
       </div>
 
-      <section className="mt-12">
-        <h2 className="mb-4 text-xl font-semibold text-white">{getSignalsTitle()}</h2>
-        <SignalList signals={signals} />
+      <section className="mt-12 rounded-xl border border-slate-800 bg-slate-900/25 p-6">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
+          <h2 className="text-xl font-bold tracking-tight text-white">{getSignalsTitle()}</h2>
+          <div className="flex items-center gap-1.5 rounded-lg bg-slate-950 p-1 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSignalTypeFilter("buy")}
+              className={`rounded px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                signalTypeFilter === "buy"
+                  ? "bg-emerald-950 text-emerald-300 shadow-md border border-emerald-500/20"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              📈 Bullish momentum
+            </button>
+            <button
+              type="button"
+              onClick={() => setSignalTypeFilter("sell")}
+              className={`rounded px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                signalTypeFilter === "sell"
+                  ? "bg-red-950 text-red-300 shadow-md border border-red-500/20"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              📉 Bearish breakdown
+            </button>
+          </div>
+        </div>
+        <SignalList signals={filteredSignals} />
       </section>
     </>
   );

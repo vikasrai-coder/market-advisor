@@ -40,6 +40,11 @@ export function SignalList({ signals }: { signals: TradingSignal[] }) {
                 Target ₹{Number(s.target_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </p>
             )}
+            {s.stop_loss != null && (
+              <p className="text-red-400">
+                SL ₹{Number(s.stop_loss).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+              </p>
+            )}
           </div>
         </li>
       ))}

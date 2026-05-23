@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getStockDetail } from "@/lib/api";
+import { TradingViewChart } from "@/components/TradingViewChart";
 
 export default async function StockPage({
   params,
@@ -35,10 +36,16 @@ export default async function StockPage({
           <Info label="Sector" value={String(stock.sector ?? "—")} />
           <Info label="P/E" value={stock.pe_ratio != null ? String(stock.pe_ratio) : "—"} />
           <Info label="Beta" value={stock.beta != null ? String(stock.beta) : "—"} />
-          <Info label="52W High" value={stock.fifty_two_week_high != null ? `$${stock.fifty_two_week_high}` : "—"} />
-          <Info label="52W Low" value={stock.fifty_two_week_low != null ? `$${stock.fifty_two_week_low}` : "—"} />
+          <Info label="52W High" value={stock.fifty_two_week_high != null ? `₹${Number(stock.fifty_two_week_high).toLocaleString("en-IN")}` : "—"} />
+          <Info label="52W Low" value={stock.fifty_two_week_low != null ? `₹${Number(stock.fifty_two_week_low).toLocaleString("en-IN")}` : "—"} />
         </div>
       )}
+
+      {/* Dynamic TradingView Chart Panel */}
+      <section className="mt-8">
+        <h2 className="mb-4 text-lg font-semibold text-white">Interactive Chart Study</h2>
+        <TradingViewChart symbol={sym} />
+      </section>
 
       {latest && (
         <section className="mt-8 rounded-xl border border-emerald-800/40 bg-emerald-950/20 p-5">
@@ -54,7 +61,7 @@ export default async function StockPage({
         <section className="mt-8">
           <h2 className="text-lg font-semibold text-white">Technical snapshot</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-            <Metric label="Price" value={`$${metrics[0].price}`} />
+            <Metric label="Price" value={`₹${Number(metrics[0].price).toLocaleString("en-IN")}`} />
             <Metric label="Change %" value={`${metrics[0].change_pct}%`} />
             <Metric label="RSI" value={String(metrics[0].rsi ?? "—")} />
             <Metric label="Trend" value={String(metrics[0].trend_score ?? "—")} />

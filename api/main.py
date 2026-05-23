@@ -132,6 +132,20 @@ def analysis_active():
     return job or {"status": "idle"}
 
 
+@app.post("/api/analysis/reconcile")
+def run_reconcile():
+    try:
+        from app.services.reconciler import reconcile_recommendations
+        summary = reconcile_recommendations()
+        return {
+            "status": "success",
+            "message": "Reconciliation completed",
+            "summary": summary,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/recommendations")
 def list_recommendations(trade_date: str | None = None, mode: str | None = None):
     client = get_client()
