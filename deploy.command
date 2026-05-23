@@ -72,13 +72,24 @@ info "Pushing to origin/$BRANCH..."
 git push origin "$BRANCH"
 ok "Pushed to GitHub"
 
+# ── Deploy directly to Vercel ──────────────────────────────
+if ! command -v vercel >/dev/null 2>&1; then
+    warn "vercel CLI is not installed."
+    warn "To trigger direct CLI deployments, install it with: npm install -g vercel"
+else
+    info "Triggering production deployment on Vercel CLI..."
+    cd web
+    vercel --prod --yes
+    cd ..
+    ok "Direct Vercel deployment completed successfully!"
+fi
+
 # ── Summary ────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 ok "Deploy complete!"
 info "GitHub  : https://github.com/vikasrai-coder/market-advisor/tree/$BRANCH"
-info "Vercel will auto-deploy from the push."
-info "Check   : https://vercel.com/dashboard"
+info "Vercel  : Dashboard at https://vercel.com/dashboard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 read -rp "Press Enter to close…"
