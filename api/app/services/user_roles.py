@@ -295,3 +295,80 @@ def close_admin_trade(trade_id: str, sell_price: float) -> bool:
         _write_json_cache(TRADES_CACHE_FILE, cache)
         return True
     return False
+
+
+def seed_admin_user() -> None:
+    """Seed the default administrator user into remote Supabase Auth and DB if online."""
+    client = get_client()
+    if not client:
+        logger.info("Supabase client not active. Skipping remote admin seeding.")
+        return
+
+    email = ADMIN_EMAIL
+    password = "DellCompaq@123"
+    
+    logger.info(f"Seeding admin user: {email}")
+    admin_user_id = None
+
+    # 1. Search for existing user in Supabase Auth list first
+    try:
+        users = client.auth.admin.list_users()
+        for u in users:
+            if u.email and u.email.lower() == email.lower():
+                admin_user_id = u.id
+                logger.info(f"Found admin user inside Supabase Auth list: {admin_user_id}")
+                break
+    except Exception as exc:
+        logger.error(f"Failed to query Supabase Auth users list: {exc}")
+
+    # 2. If user does not exist in Auth, attempt to create them
+    if not admin_user_id:
+        try:
+            auth_res = client.auth.admin.create_user({
+                "email": email,
+                "password": password,
+                "email_confirm": True
+            })
+            if auth_res and hasattr(auth_res, "user") and auth_res.user:
+                admin_user_id = auth_res.user.id
+                logger.info(f"Supabase Auth seeded admin user successfully -> {admin_user_id}")
+        except Exception as exc:
+            err_msg = str(exc)
+            logger.info(f"Admin auth registration skipped or already exists: {err_msg}")
+
+    # 3. Handle user_roles DB cleanups and mappings
+    # If the user was found or created, ensure there is no duplicate mapping
+    if admin_user_id and admin_user_id != "admin-vikas-id":
+        try:
+            # Delete any legacy placeholder role row with 'admin-vikas-id' if it exists to avoid key conflicts
+            client.table("user_roles").delete().eq("user_id", "admin-vikas-id").execute()
+            logger.info("Cleaned up legacy admin-vikas-id user_role entries.")
+        except Exception as exc:
+            logger.error(f"Failed to clean up legacy placeholder: {exc}")
+
+    # Fallback to local admin placeholder ID if still not found
+    if not admin_user_id:
+        admin_user_id = "admin-vikas-id"
+
+    # 4. Create or update user_roles profile in DB with admin role and full permissions
+    profile = {
+        "user_id": admin_user_id,
+        "email": email,
+        "role": "admin",
+        "permissions": {
+            "can_view_charts": True,
+            "can_view_recommendations": True,
+            "can_view_heatmap": True,
+            "can_view_signals": True,
+            "can_backtest": True,
+            "can_use_portfolio": True,
+        }
+    }
+    
+    try:
+        client.table("user_roles").upsert(profile, on_conflict="user_id").execute()
+        logger.info(f"Supabase seeded user_roles profile successfully for {admin_user_id}.")
+    except Exception as exc:
+        logger.error(f"Failed to upsert admin user_roles profile: {exc}")
+
+

@@ -36,6 +36,13 @@ def _scheduled_analysis() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Seed administrative credentials in Supabase Auth on backend startup
+    try:
+        from app.services.user_roles import seed_admin_user
+        seed_admin_user()
+    except Exception as exc:
+        print(f"Failed to seed admin user on startup: {exc}")
+
     if not IS_VERCEL and os.getenv("ENABLE_SCHEDULER", "true").lower() == "true":
         scheduler.add_job(_scheduled_analysis, "cron", hour=18, minute=0, id="daily_analysis")
         scheduler.start()
@@ -182,17 +189,11 @@ def login_endpoint(req: LoginRequest):
 @app.get("/api/user/profile")
 def get_user_profile_endpoint(user_id: str, email: str | None = None):
     try:
-        from app.services.user_role_profile = get_user_role_profile
+        from app.services.user_roles import get_user_role_profile
         profile = get_user_role_profile(user_id, email)
         return profile
     except Exception as exc:
-        # Avoid import errors if service isn't active
-        try:
-            from app.services.user_roles import get_user_role_profile
-            profile = get_user_role_profile(user_id, email)
-            return profile
-        except Exception:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/admin/users")

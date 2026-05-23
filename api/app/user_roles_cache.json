@@ -31,6 +31,21 @@
       "id": "ac041d9e-ef4d-49b9-a700-bf9e656492a0",
       "created_at": "2026-05-23T14:44:22.763219",
       "offline_password": "VikasPassword@123"
+    },
+    "0025ee9a-b3c0-48d6-be0b-e9285ee34d2e": {
+      "id": "8ee328e1-e471-4391-9c25-fab4a4a510d8",
+      "user_id": "0025ee9a-b3c0-48d6-be0b-e9285ee34d2e",
+      "email": "admin@market.in",
+      "role": "user",
+      "permissions": {
+        "can_view_charts": true,
+        "can_view_recommendations": true,
+        "can_view_heatmap": true,
+        "can_view_signals": true,
+        "can_backtest": true,
+        "can_use_portfolio": true
+      },
+      "created_at": "2026-05-23T14:53:12.036911"
     }
   }
 }
