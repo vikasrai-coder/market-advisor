@@ -6,6 +6,7 @@ import {
   adminGetTrades,
   adminBuyTrade,
   adminSellTrade,
+  sendTelegramTest,
   UserRoleProfile,
   AdminTrade,
 } from "@/lib/api";
@@ -33,6 +34,10 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
   // Close transaction state
   const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
   const [sellPriceInput, setSellPriceInput] = useState<number>(0);
+
+  // Telegram test state
+  const [telegramTesting, setTelegramTesting] = useState<boolean>(false);
+  const [telegramResult, setTelegramResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const loadData = async () => {
     try {
@@ -122,6 +127,20 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
       await loadData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Handle Telegram test
+  const handleTelegramTest = async () => {
+    setTelegramTesting(true);
+    setTelegramResult(null);
+    try {
+      const result = await sendTelegramTest();
+      setTelegramResult(result);
+    } catch (err: any) {
+      setTelegramResult({ success: false, message: err?.message || "Failed to send test alert" });
+    } finally {
+      setTelegramTesting(false);
     }
   };
 
@@ -469,6 +488,66 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
             )}
           </div>
 
+        </div>
+
+        {/* Telegram Notification Panel */}
+        <div className="rounded-3xl border border-slate-800 bg-slate-950/60 backdrop-blur-xl p-6 shadow-2xl">
+          <div className="flex justify-between items-start border-b border-slate-900/60 pb-4 mb-5">
+            <div>
+              <h3 className="text-md font-extrabold text-slate-100 tracking-wide flex items-center gap-2">
+                📨 Telegram Alert System
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Verify your Telegram bot is live and alerts reach your channel.
+              </p>
+            </div>
+            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              Bot: VRstockalert_bot
+            </span>
+          </div>
+
+          {/* Status info */}
+          <div className="bg-slate-900/20 border border-slate-900 rounded-2xl p-4 mb-4 space-y-2">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-500 font-bold">Channel / Chat ID</span>
+              <span className="text-slate-200 font-black font-mono">@vikasraiexp (private)</span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-500 font-bold">Alert Trigger</span>
+              <span className="text-slate-300">Auto-fires after every analysis run</span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-500 font-bold">Format</span>
+              <span className="text-slate-300">Top 5 picks · Target · Stop Loss · AI Reasoning</span>
+            </div>
+          </div>
+
+          {/* Test button */}
+          <button
+            onClick={handleTelegramTest}
+            disabled={telegramTesting}
+            className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)] hover:shadow-[0_0_20px_rgba(59,130,246,0.3)]"
+          >
+            {telegramTesting ? (
+              <>
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-blue-300/30 border-t-white animate-spin" />
+                Sending Test Alert…
+              </>
+            ) : (
+              <>📨 Send Test Telegram Alert</>
+            )}
+          </button>
+
+          {/* Result feedback */}
+          {telegramResult && (
+            <div className={`mt-3 p-3 rounded-xl text-xs font-bold ${
+              telegramResult.success
+                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                : "bg-rose-500/10 border border-rose-500/20 text-rose-400"
+            }`}>
+              {telegramResult.success ? "✅" : "❌"} {telegramResult.message}
+            </div>
+          )}
         </div>
 
       </div>

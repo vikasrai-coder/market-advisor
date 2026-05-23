@@ -359,6 +359,8 @@ export async function adminSellTrade(tradeId: string, sellPrice: number) {
     body: JSON.stringify({ trade_id: tradeId, sell_price: sellPrice }),
   });
 }
-
-
-
+export async function sendTelegramTest() {
+  return fetchJson<{ success: boolean; message: string }>("/api/telegram/test", {
+    method: "POST",
+  });
+}

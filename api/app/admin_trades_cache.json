@@ -10,6 +10,24 @@
       "created_at": "2026-05-23T14:44:23.677641",
       "sell_price": 2500.0,
       "profit_loss": 1000.0
+    },
+    "e8cc4c7b-c9c3-482c-ab4d-599d8a778483": {
+      "symbol": "KAYNES.NS",
+      "shares_quantity": 9.0,
+      "buy_price": 4272.0,
+      "trade_status": "open",
+      "id": "e8cc4c7b-c9c3-482c-ab4d-599d8a778483",
+      "display_symbol": "KAYNES",
+      "created_at": "2026-05-23T17:02:02.206569"
+    },
+    "8c7c1790-4e7d-4dec-8811-4874e0cf9bea": {
+      "symbol": "KAYNES.NS",
+      "shares_quantity": 9.0,
+      "buy_price": 4272.0,
+      "trade_status": "open",
+      "id": "8c7c1790-4e7d-4dec-8811-4874e0cf9bea",
+      "display_symbol": "KAYNES",
+      "created_at": "2026-05-23T17:04:05.741548"
     }
   }
 }

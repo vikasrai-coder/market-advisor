@@ -3,7 +3,8 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional, Tuple
 import yfinance as yf
 
 from app.services.supabase_store import get_client
@@ -12,6 +13,12 @@ from app.symbols import normalize_symbol, display_symbol
 logger = logging.getLogger(__name__)
 
 USER_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_workspace_cache.json")
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+
+def _is_valid_uuid(value: str) -> bool:
+    return bool(_UUID_RE.match(value))
 
 
 def _read_local_cache() -> Dict[str, Any]:
@@ -32,36 +39,84 @@ def _write_local_cache(data: Dict[str, Any]) -> None:
         logger.error(f"Failed to write user workspace cache: {exc}")
 
 
+def _split_symbol(symbol: str) -> Tuple[str, str]:
+    """Return (bare_symbol, exchange) e.g. ('KAYNES', 'NSE') or ('AAPL', 'US')."""
+    s = symbol.strip().upper()
+    if s.endswith(".NS"):
+        return s.replace(".NS", ""), "NSE"
+    if s.endswith(".BO"):
+        return s.replace(".BO", ""), "BSE"
+    return s, "US"
+
+
+def _fetch_stock_profile(norm_sym: str) -> Dict[str, Any]:
+    """Fetch yfinance data and return a dict of valid stocks-table columns."""
+    profile: Dict[str, Any] = {"symbol": norm_sym}
+    try:
+        ticker = yf.Ticker(norm_sym)
+        info = ticker.info or {}
+        if info.get("longName") or info.get("shortName"):
+            profile["name"] = info.get("longName") or info.get("shortName") or norm_sym
+        if info.get("sector"):
+            profile["sector"] = info["sector"]
+        if info.get("industry"):
+            profile["industry"] = info["industry"]
+        if info.get("marketCap"):
+            profile["market_cap"] = info["marketCap"]
+        if info.get("trailingPE"):
+            profile["pe_ratio"] = info["trailingPE"]
+        if info.get("dividendYield"):
+            profile["dividend_yield"] = info["dividendYield"]
+        if info.get("fiftyTwoWeekHigh"):
+            profile["fifty_two_week_high"] = info["fiftyTwoWeekHigh"]
+        if info.get("fiftyTwoWeekLow"):
+            profile["fifty_two_week_low"] = info["fiftyTwoWeekLow"]
+        profile["exchange"] = "NSE" if norm_sym.endswith(".NS") else ("BSE" if norm_sym.endswith(".BO") else "US")
+        profile["currency"] = info.get("currency", "INR" if ".NS" in norm_sym else "USD")
+    except Exception:
+        pass
+    return profile
+
+
 # ---------------------------------------------------------------------------
 # Watchlist Services
 # ---------------------------------------------------------------------------
 
 def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
     client = get_client()
-    symbols = []
-    
-    if client:
+    raw_symbols: List[str] = []
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
-            res = client.table("user_watchlists").select("symbol").eq("user_id", user_id).execute()
-            symbols = [row["symbol"] for row in res.data]
+            res = client.table("user_watchlists").select("symbol, exchange").eq("user_id", user_id).execute()
+            # Reconstruct full symbols: KAYNES + NSE → KAYNES.NS
+            for row in res.data:
+                bare = row["symbol"]
+                exch = (row.get("exchange") or "NSE").upper()
+                if exch == "NSE":
+                    raw_symbols.append(f"{bare}.NS")
+                elif exch == "BSE":
+                    raw_symbols.append(f"{bare}.BO")
+                else:
+                    raw_symbols.append(bare)
         except Exception as exc:
             logger.error(f"Failed to fetch user watchlist from Supabase: {exc}")
-            # Fallback to local cache if DB error
             cache = _read_local_cache()
-            symbols = cache.get("user_watchlists", {}).get(user_id, [])
+            raw_symbols = cache.get("user_watchlists", {}).get(user_id, [])
     else:
         cache = _read_local_cache()
-        symbols = cache.get("user_watchlists", {}).get(user_id, [])
+        raw_symbols = cache.get("user_watchlists", {}).get(user_id, [])
 
     # Fetch live price metrics for watchlisted symbols
     watchlist_items = []
-    for sym in symbols:
+    for sym in raw_symbols:
         try:
             norm_sym = normalize_symbol(sym)
             ticker = yf.Ticker(norm_sym)
             info = ticker.info or {}
-            
-            # Get last price
+
             history = ticker.history(period="1d")
             price = float(history["Close"].iloc[-1]) if not history.empty else 0.0
             prev_close = float(info.get("previousClose") or price)
@@ -89,19 +144,29 @@ def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
 
 def add_to_watchlist(user_id: str, symbol: str) -> bool:
     norm_sym = normalize_symbol(symbol)
+    bare_sym, exchange = _split_symbol(norm_sym)
     client = get_client()
-    
-    if client:
+
+    # Enrich stocks table with live yfinance data
+    stock_profile = _fetch_stock_profile(norm_sym)
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
-            # Ensure stock exists in stocks table first
-            profile = {"symbol": norm_sym, "display_symbol": display_symbol(norm_sym)}
-            client.table("stocks").upsert(profile).execute()
-            client.table("user_watchlists").upsert({"user_id": user_id, "symbol": norm_sym}).execute()
+            # Upsert stock info (schema-valid columns only)
+            client.table("stocks").upsert(stock_profile).execute()
+            # user_watchlists stores bare symbol + exchange separately
+            client.table("user_watchlists").upsert({
+                "user_id": user_id,
+                "symbol": bare_sym,
+                "exchange": exchange,
+            }).execute()
             return True
         except Exception as exc:
             logger.error(f"Failed to add to user watchlist on Supabase: {exc}")
-            
-    # Local cache fallback
+
+    # Local cache fallback (always save full .NS symbol)
     cache = _read_local_cache()
     if user_id not in cache["user_watchlists"]:
         cache["user_watchlists"][user_id] = []
@@ -113,19 +178,27 @@ def add_to_watchlist(user_id: str, symbol: str) -> bool:
 
 def remove_from_watchlist(user_id: str, symbol: str) -> bool:
     norm_sym = normalize_symbol(symbol)
+    bare_sym, exchange = _split_symbol(norm_sym)
     client = get_client()
-    
-    if client:
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
-            client.table("user_watchlists").delete().eq("user_id", user_id).eq("symbol", norm_sym).execute()
+            # Try both bare symbol and full symbol
+            client.table("user_watchlists").delete().eq("user_id", user_id).eq("symbol", bare_sym).execute()
             return True
         except Exception as exc:
             logger.error(f"Failed to remove from user watchlist on Supabase: {exc}")
 
     # Local cache fallback
     cache = _read_local_cache()
-    if user_id in cache["user_watchlists"] and norm_sym in cache["user_watchlists"][user_id]:
-        cache["user_watchlists"][user_id].remove(norm_sym)
+    if user_id in cache["user_watchlists"]:
+        wl = cache["user_watchlists"][user_id]
+        # Match by full sym or bare sym
+        to_remove = [s for s in wl if s == norm_sym or s == bare_sym]
+        for s in to_remove:
+            wl.remove(s)
         _write_local_cache(cache)
     return True
 
@@ -137,8 +210,10 @@ def remove_from_watchlist(user_id: str, symbol: str) -> bool:
 def get_user_portfolio(user_id: str) -> Dict[str, Any]:
     client = get_client()
     holdings = []
-    
-    if client:
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
             res = client.table("user_portfolios").select("*").eq("user_id", user_id).execute()
             holdings = res.data
@@ -166,7 +241,7 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
             ticker = yf.Ticker(norm_sym)
             history = ticker.history(period="1d")
             current_price = float(history["Close"].iloc[-1]) if not history.empty else buy_price
-            
+
             investment = round(qty * buy_price, 2)
             current_value = round(qty * current_price, 2)
             profit_loss = round(current_value - investment, 2)
@@ -188,7 +263,6 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
                 "profit_loss_pct": profit_loss_pct,
             })
         except Exception:
-            # Fallback if yfinance fetch fails
             investment = round(qty * buy_price, 2)
             holdings_items.append({
                 "symbol": sym,
@@ -220,17 +294,20 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
 def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: float) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
-    
-    if client:
+
+    # Enrich stocks table with yfinance data
+    stock_profile = _fetch_stock_profile(norm_sym)
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
-            # Ensure stock exists first
-            profile = {"symbol": norm_sym, "display_symbol": display_symbol(norm_sym)}
-            client.table("stocks").upsert(profile).execute()
+            # Ensure stock exists in stocks table (valid columns only)
+            client.table("stocks").upsert(stock_profile).execute()
 
             # Check if holding already exists
             existing = client.table("user_portfolios").select("*").eq("user_id", user_id).eq("symbol", norm_sym).maybe_single().execute()
             if existing.data:
-                # Average down / up calculations
                 old_qty = float(existing.data["shares_quantity"])
                 old_price = float(existing.data["buy_price"])
                 new_qty = old_qty + quantity
@@ -254,8 +331,7 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
     cache = _read_local_cache()
     if user_id not in cache["user_portfolios"]:
         cache["user_portfolios"][user_id] = []
-    
-    # Check if stock exists in local holdings
+
     found = False
     for item in cache["user_portfolios"][user_id]:
         if item["symbol"] == norm_sym:
@@ -263,18 +339,18 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
             old_price = float(item["buy_price"])
             new_qty = old_qty + quantity
             new_price = round(((old_qty * old_price) + (quantity * buy_price)) / new_qty, 2)
-            item["shares_quantity"] = new_qty;
-            item["buy_price"] = new_price;
+            item["shares_quantity"] = new_qty
+            item["buy_price"] = new_price
             found = True
             break
-            
+
     if not found:
         cache["user_portfolios"][user_id].append({
             "symbol": norm_sym,
             "shares_quantity": quantity,
             "buy_price": buy_price,
         })
-        
+
     _write_local_cache(cache)
     return True
 
@@ -282,14 +358,15 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
 def sell_from_portfolio(user_id: str, symbol: str, quantity: float) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
-    
-    if client:
+
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
         try:
             existing = client.table("user_portfolios").select("*").eq("user_id", user_id).eq("symbol", norm_sym).maybe_single().execute()
             if existing.data:
                 old_qty = float(existing.data["shares_quantity"])
                 if quantity >= old_qty:
-                    # Sell full position
                     client.table("user_portfolios").delete().eq("id", existing.data["id"]).execute()
                 else:
                     new_qty = old_qty - quantity

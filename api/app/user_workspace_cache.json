@@ -2,7 +2,11 @@
   "user_watchlists": {
     "test-trader-1": [
       "INFY.NS"
-    ]
+    ],
+    "0025ee9a-b3c0-48d6-be0b-e9285ee34d2e": [
+      "KAYNES.NS"
+    ],
+    "admin-vikas-id": []
   },
   "user_portfolios": {
     "test-trader-1": [
@@ -11,6 +15,7 @@
         "shares_quantity": 20.0,
         "buy_price": 2433.33
       }
-    ]
+    ],
+    "admin-vikas-id": []
   }
 }

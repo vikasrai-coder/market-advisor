@@ -255,6 +255,42 @@ def admin_sell_trade_endpoint(req: AdminTradeCloseRequest):
 
 
 
+@app.post("/api/telegram/test")
+def telegram_test_endpoint():
+    """Fire a test Telegram notification to verify bot + channel configuration."""
+    try:
+        from app.services.notifier import send_telegram_recommendations
+        test_recs = [
+            {
+                "symbol": "DIXON.NS",
+                "rank": 1,
+                "composite_score": 92,
+                "target_price": 18500.00,
+                "stop_loss": 16200.00,
+                "trade_date": "Test Alert",
+                "is_undervalued": True,
+                "reasoning": "Strong momentum with bullish MACD crossover. RSI recovering from oversold. Institutional buying detected.",
+            },
+            {
+                "symbol": "BHARTIARTL.NS",
+                "rank": 2,
+                "composite_score": 87,
+                "target_price": 1950.00,
+                "stop_loss": 1720.00,
+                "trade_date": "Test Alert",
+                "is_undervalued": False,
+                "reasoning": "Breakout above 52-week resistance. Strong subscriber growth driving earnings beat.",
+            },
+        ]
+        success = send_telegram_recommendations(test_recs, "Test Alert — System Check")
+        if success:
+            return {"success": True, "message": "Telegram test alert sent successfully! Check your Telegram."}
+        else:
+            return {"success": False, "message": "Telegram not configured or send failed. Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID."}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/api/watchlist/sync")
 def sync_watchlist():
     try:
