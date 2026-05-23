@@ -46,6 +46,22 @@
         "can_use_portfolio": true
       },
       "created_at": "2026-05-23T14:53:12.036911"
+    },
+    "23da0e5f-fa62-4640-b40f-5f68a57f928a": {
+      "user_id": "23da0e5f-fa62-4640-b40f-5f68a57f928a",
+      "email": "rohit.gupta@kg.com",
+      "role": "user",
+      "permissions": {
+        "can_view_charts": true,
+        "can_view_recommendations": true,
+        "can_view_heatmap": true,
+        "can_view_signals": true,
+        "can_backtest": true,
+        "can_use_portfolio": true
+      },
+      "id": "d1c3f1af-9b11-4d23-bcfd-4083d68e25d3",
+      "created_at": "2026-05-23T16:10:53.748203",
+      "offline_password": "Rohit@123"
     }
   }
 }
