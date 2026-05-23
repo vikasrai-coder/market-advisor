@@ -58,50 +58,67 @@ export function Dashboard() {
         let userId = "";
         let email = "";
         let role = "user";
-        
+
         // 1. Check offline localStorage session first
         const offlineId = localStorage.getItem("offline_user_id");
         const offlineEmail = localStorage.getItem("offline_user_email");
         const offlineRole = localStorage.getItem("offline_user_role");
-        
+
         if (offlineId && offlineEmail) {
           userId = offlineId;
           email = offlineEmail;
           role = offlineRole || "user";
         } else {
           // 2. Fallback to Supabase Auth
-          const supabase = createClient();
-          const { data } = await supabase.auth.getUser();
-          if (data?.user) {
-            userId = data.user.id;
-            email = data.user.email ?? "";
+          try {
+            const supabase = createClient();
+            const { data } = await supabase.auth.getUser();
+            if (data?.user) {
+              userId = data.user.id;
+              email = data.user.email ?? "";
+            }
+          } catch {
+            // Supabase not reachable — continue with empty session
           }
         }
-        
+
         if (userId) {
-          // Fetch backend roles permissions profile
-          const profile = await getUserProfile(userId, email || undefined);
-          setSessionUser({
-            id: userId,
-            email: email || profile.email,
-            role: profile.role,
-          });
-          
-          // Only use custom profile permissions if not impersonating
-          const sessionImpersonatedEmail = sessionStorage.getItem("impersonated_email");
-          const sessionImpersonatedId = sessionStorage.getItem("impersonated_id");
-          const sessionImpersonatedPermissions = sessionStorage.getItem("impersonated_permissions");
-          
-          if (sessionImpersonatedEmail && sessionImpersonatedId && sessionImpersonatedPermissions) {
-            setImpersonatedEmail(sessionImpersonatedEmail);
-            setImpersonatedId(sessionImpersonatedId);
-            setPermissions(JSON.parse(sessionImpersonatedPermissions));
-          } else {
-            setPermissions(profile.permissions);
+          // Set session immediately from local data before API call
+          setSessionUser({ id: userId, email, role });
+
+          // Try to fetch backend roles/permissions profile
+          try {
+            const profile = await getUserProfile(userId, email || undefined);
+            setSessionUser({
+              id: userId,
+              email: email || profile.email,
+              role: profile.role,
+            });
+
+            // Only use custom profile permissions if not impersonating
+            const sessionImpersonatedEmail = sessionStorage.getItem("impersonated_email");
+            const sessionImpersonatedId = sessionStorage.getItem("impersonated_id");
+            const sessionImpersonatedPermissions = sessionStorage.getItem("impersonated_permissions");
+
+            if (sessionImpersonatedEmail && sessionImpersonatedId && sessionImpersonatedPermissions) {
+              setImpersonatedEmail(sessionImpersonatedEmail);
+              setImpersonatedId(sessionImpersonatedId);
+              setPermissions(JSON.parse(sessionImpersonatedPermissions));
+            } else {
+              setPermissions(profile.permissions);
+            }
+          } catch (profileErr) {
+            // API unreachable or 404 — keep default full permissions so user can still use the app
+            console.warn("Could not fetch user profile from API, using defaults:", profileErr);
+            // For offline/admin users, apply admin role from localStorage
+            if (role === "admin" || offlineId === "admin-vikas-id") {
+              setSessionUser({ id: userId, email, role: "admin" });
+            }
+            // permissions stay at default full-access set during initialization
           }
         }
       } catch (err) {
-        console.error("Failed to load user session permissions:", err);
+        console.error("Failed to load user session:", err);
       }
     }
     loadSession();

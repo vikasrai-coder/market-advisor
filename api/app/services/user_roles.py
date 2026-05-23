@@ -231,19 +231,18 @@ def get_admin_trades() -> List[Dict[str, Any]]:
 def record_admin_trade(symbol: str, quantity: float, buy_price: float) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
-    
+
     trade_data = {
         "symbol": norm_sym,
         "shares_quantity": quantity,
         "buy_price": buy_price,
         "trade_status": "open",
     }
-    
+
     if client:
         try:
-            # Ensure stock exists first
-            profile = {"symbol": norm_sym, "display_symbol": display_symbol(norm_sym)}
-            client.table("stocks").upsert(profile).execute()
+            # Ensure stock exists — only valid schema columns (no display_symbol)
+            client.table("stocks").upsert({"symbol": norm_sym}).execute()
             client.table("admin_trades").insert(trade_data).execute()
             return True
         except Exception as exc:

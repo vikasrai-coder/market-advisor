@@ -38,6 +38,7 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
   // Sync state
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [apiConnected, setApiConnected] = useState<boolean | null>(null);
 
   // Load user session if available, respecting the propUserId if passed
   useEffect(() => {
@@ -68,8 +69,11 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
       ]);
       setWatchlist(watchData.watchlist ?? []);
       setPortfolio(portData);
+      setApiConnected(true);
     } catch (err) {
-      console.error("Failed to load workspace data:", err);
+      console.warn("Failed to load workspace data (API may be starting up):", err);
+      setApiConnected(false);
+      // Keep existing state, don't wipe data
     }
   }, [userId]);
 
