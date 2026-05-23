@@ -157,7 +157,13 @@ def list_recommendations(trade_date: str | None = None, mode: str | None = None)
         )
         if mode:
             latest_query = latest_query.eq("trade_mode", mode)
-        latest = latest_query.order("trade_date", desc=True).limit(1).execute()
+        try:
+            latest = latest_query.order("trade_date", desc=True).limit(1).execute()
+        except Exception as exc:
+            if "trade_mode" in str(exc).lower() or "column" in str(exc).lower():
+                latest = client.table("recommendations").select("trade_date").order("trade_date", desc=True).limit(1).execute()
+            else:
+                raise exc
         if latest.data:
             target_date = latest.data[0]["trade_date"]
     query = (
@@ -167,9 +173,33 @@ def list_recommendations(trade_date: str | None = None, mode: str | None = None)
     )
     if target_date:
         query = query.eq("trade_date", target_date)
-    if mode:
-        query = query.eq("trade_mode", mode)
-    result = query.execute()
+    
+    try:
+        if mode:
+            query_with_mode = query.eq("trade_mode", mode)
+            result = query_with_mode.execute()
+        else:
+            result = query.execute()
+    except Exception as exc:
+        if "trade_mode" in str(exc).lower() or "column" in str(exc).lower() or getattr(exc, "code", None) == "42703":
+            # Reconstruct completely fresh to avoid mutation issues
+            fallback_query = (
+                client.table("recommendations")
+                .select("*, stocks(name, sector, pe_ratio, market_cap)")
+                .order("rank")
+            )
+            if target_date:
+                fallback_query = fallback_query.eq("trade_date", target_date)
+            result = fallback_query.execute()
+            if mode:
+                filtered_data = []
+                for row in result.data:
+                    row_mode = row.get("trade_mode", "swing")
+                    if row_mode == mode:
+                        filtered_data.append(row)
+                return {"recommendations": filtered_data, "trade_date": target_date, "trade_mode": mode}
+        else:
+            raise exc
     return {"recommendations": result.data, "trade_date": target_date, "trade_mode": mode}
 
 
@@ -191,9 +221,31 @@ def list_signals(planned_trade_date: str | None = None, signal_type: str | None 
         query = query.eq("planned_trade_date", planned_trade_date)
     if signal_type:
         query = query.eq("signal_type", signal_type)
-    if mode:
-        query = query.eq("trade_mode", mode)
-    result = query.limit(50).execute()
+    
+    try:
+        if mode:
+            query_with_mode = query.eq("trade_mode", mode)
+            result = query_with_mode.limit(50).execute()
+        else:
+            result = query.limit(50).execute()
+    except Exception as exc:
+        if "trade_mode" in str(exc).lower() or "column" in str(exc).lower() or getattr(exc, "code", None) == "42703":
+            # Reconstruct completely fresh to avoid mutation issues
+            fallback_query = client.table("trading_signals").select("*, stocks(name, sector)").order("created_at", desc=True)
+            if planned_trade_date:
+                fallback_query = fallback_query.eq("planned_trade_date", planned_trade_date)
+            if signal_type:
+                fallback_query = fallback_query.eq("signal_type", signal_type)
+            result = fallback_query.limit(50).execute()
+            if mode:
+                filtered_data = []
+                for row in result.data:
+                    row_mode = row.get("trade_mode", "swing")
+                    if row_mode == mode:
+                        filtered_data.append(row)
+                return {"signals": filtered_data}
+        else:
+            raise exc
     return {"signals": result.data}
 
 
