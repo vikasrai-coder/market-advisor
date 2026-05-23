@@ -1,5 +1,7 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export type TradeMode = "intraday" | "swing" | "longterm" | "future";
+
 export type Recommendation = {
   id?: string;
   symbol: string;
@@ -10,11 +12,20 @@ export type Recommendation = {
   trend_score: number;
   news_score: number;
   technical_score: number;
+  fundamental_score?: number;
   ai_confidence: number;
   reasoning: string;
   key_factors: string[];
   signal_date: string;
   trade_date: string;
+  trade_mode?: TradeMode;
+  // Mode-specific optional indicators
+  vwap?: number;
+  bullish_crossover?: boolean;
+  golden_cross?: boolean;
+  range_52w_pct?: number;
+  pe_ratio?: number;
+  dividend_yield?: number;
   stocks?: {
     name: string;
     sector: string;
@@ -27,6 +38,7 @@ export type TradingSignal = {
   id?: string;
   symbol: string;
   signal_type: "buy" | "sell" | "hold";
+  trade_mode?: TradeMode;
   strength: string;
   price_at_signal: number;
   target_price: number | null;
@@ -66,17 +78,21 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function getRecommendations(tradeDate?: string) {
-  const q = tradeDate ? `?trade_date=${tradeDate}` : "";
+export async function getRecommendations(tradeDate?: string, mode?: TradeMode) {
+  const params = new URLSearchParams();
+  if (tradeDate) params.set("trade_date", tradeDate);
+  if (mode) params.set("mode", mode);
+  const q = params.toString() ? `?${params}` : "";
   return fetchJson<{ recommendations: Recommendation[]; trade_date: string }>(
     `/api/recommendations${q}`
   );
 }
 
-export async function getSignals(plannedDate?: string, signalType?: string) {
+export async function getSignals(plannedDate?: string, signalType?: string, mode?: TradeMode) {
   const params = new URLSearchParams();
   if (plannedDate) params.set("planned_trade_date", plannedDate);
   if (signalType) params.set("signal_type", signalType);
+  if (mode) params.set("mode", mode);
   const q = params.toString() ? `?${params}` : "";
   return fetchJson<{ signals: TradingSignal[] }>(`/api/signals${q}`);
 }
@@ -101,12 +117,13 @@ export type AnalysisStartResponse = {
   };
 };
 
-export async function startAnalysisJob() {
+export async function startAnalysisJob(mode: TradeMode = "swing", targetDate?: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 600000);
   try {
     return await fetchJson<AnalysisStartResponse>("/api/analysis/run", {
       method: "POST",
+      body: JSON.stringify({ mode, target_date: targetDate || null }),
       signal: controller.signal,
     });
   } finally {

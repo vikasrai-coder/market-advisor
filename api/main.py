@@ -75,11 +75,25 @@ def health():
     }
 
 
+from pydantic import BaseModel
+
+class AnalysisRequest(BaseModel):
+    mode: str = "swing"
+    target_date: str | None = None
+
+
 @app.post("/api/analysis/run")
-def run_analysis():
+def run_analysis(req: AnalysisRequest = None):
+    # Support both json body or default
+    mode = "swing"
+    target_date = None
+    if req:
+        mode = req.mode
+        target_date = req.target_date
+
     if IS_VERCEL:
         try:
-            result = analyzer.run_full_analysis()
+            result = analyzer.run_full_analysis(mode=mode, target_date=target_date)
             return {
                 "job_id": "vercel-sync",
                 "status": "completed",
@@ -96,11 +110,11 @@ def run_analysis():
             "status": "running",
             "message": "Analysis already in progress",
         }
-    job_id = analysis_jobs.start_job()
+    job_id = analysis_jobs.start_job(mode=mode, target_date=target_date)
     return {
         "job_id": job_id,
         "status": "running",
-        "message": "Analysis started. Poll /api/analysis/status/{job_id} for progress.",
+        "message": f"Analysis started for {mode}. Poll /api/analysis/status/{{job_id}} for progress.",
     }
 
 
@@ -119,13 +133,15 @@ def analysis_active():
 
 
 @app.get("/api/recommendations")
-def list_recommendations(trade_date: str | None = None):
+def list_recommendations(trade_date: str | None = None, mode: str | None = None):
     client = get_client()
     if not client:
         cached = analyzer.get_last_result()
         if not cached:
             return {"recommendations": [], "trade_date": None, "source": "memory"}
         recs = cached.get("top_recommendations") or []
+        if mode:
+            recs = [r for r in recs if r.get("trade_mode") == mode]
         if trade_date:
             recs = [r for r in recs if r.get("trade_date") == trade_date]
         return {
@@ -135,13 +151,13 @@ def list_recommendations(trade_date: str | None = None):
         }
     target_date = trade_date
     if not target_date:
-        latest = (
+        latest_query = (
             client.table("recommendations")
             .select("trade_date")
-            .order("trade_date", desc=True)
-            .limit(1)
-            .execute()
         )
+        if mode:
+            latest_query = latest_query.eq("trade_mode", mode)
+        latest = latest_query.order("trade_date", desc=True).limit(1).execute()
         if latest.data:
             target_date = latest.data[0]["trade_date"]
     query = (
@@ -151,16 +167,20 @@ def list_recommendations(trade_date: str | None = None):
     )
     if target_date:
         query = query.eq("trade_date", target_date)
+    if mode:
+        query = query.eq("trade_mode", mode)
     result = query.execute()
-    return {"recommendations": result.data, "trade_date": target_date}
+    return {"recommendations": result.data, "trade_date": target_date, "trade_mode": mode}
 
 
 @app.get("/api/signals")
-def list_signals(planned_trade_date: str | None = None, signal_type: str | None = None):
+def list_signals(planned_trade_date: str | None = None, signal_type: str | None = None, mode: str | None = None):
     client = get_client()
     if not client:
         cached = analyzer.get_last_result()
         signals = (cached or {}).get("signals") or []
+        if mode:
+            signals = [s for s in signals if s.get("trade_mode") == mode]
         if planned_trade_date:
             signals = [s for s in signals if s.get("planned_trade_date") == planned_trade_date]
         if signal_type:
@@ -171,6 +191,8 @@ def list_signals(planned_trade_date: str | None = None, signal_type: str | None 
         query = query.eq("planned_trade_date", planned_trade_date)
     if signal_type:
         query = query.eq("signal_type", signal_type)
+    if mode:
+        query = query.eq("trade_mode", mode)
     result = query.limit(50).execute()
     return {"signals": result.data}
 

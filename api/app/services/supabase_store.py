@@ -13,11 +13,12 @@ STOCK_COLUMNS = {
 RECOMMENDATION_COLUMNS = {
     "id", "run_id", "symbol", "rank", "action", "composite_score", "trend_score",
     "news_score", "technical_score", "ai_confidence", "reasoning", "key_factors",
-    "signal_date", "trade_date", "cap_segment",
+    "signal_date", "trade_date", "cap_segment", "trade_mode",
 }
 SIGNAL_COLUMNS = {
     "id", "run_id", "symbol", "signal_type", "strength", "price_at_signal",
     "target_price", "stop_loss", "rationale", "signal_date", "planned_trade_date",
+    "trade_mode",
 }
 NEWS_COLUMNS = {
     "symbol", "title", "summary", "url", "source", "sentiment_label",
@@ -77,7 +78,16 @@ def clear_recommendations_for_date(client: Client, signal_date: date) -> None:
 def insert_recommendations(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
         cleaned = [_pick(r, RECOMMENDATION_COLUMNS) for r in rows]
-        client.table("recommendations").insert(cleaned).execute()
+        try:
+            client.table("recommendations").insert(cleaned).execute()
+        except Exception as exc:
+            # Fallback: if table doesn't have trade_mode yet, strip it and insert
+            if "trade_mode" in str(exc).lower() or "column" in str(exc).lower():
+                cols_without_mode = RECOMMENDATION_COLUMNS - {"trade_mode"}
+                cleaned_fallback = [_pick(r, cols_without_mode) for r in rows]
+                client.table("recommendations").insert(cleaned_fallback).execute()
+            else:
+                raise exc
 
 
 def clear_signals_for_date(client: Client, signal_date: date) -> None:
@@ -87,4 +97,13 @@ def clear_signals_for_date(client: Client, signal_date: date) -> None:
 def insert_signals(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
         cleaned = [_pick(r, SIGNAL_COLUMNS) for r in rows]
-        client.table("trading_signals").insert(cleaned).execute()
+        try:
+            client.table("trading_signals").insert(cleaned).execute()
+        except Exception as exc:
+            # Fallback: if table doesn't have trade_mode yet, strip it and insert
+            if "trade_mode" in str(exc).lower() or "column" in str(exc).lower():
+                cols_without_mode = SIGNAL_COLUMNS - {"trade_mode"}
+                cleaned_fallback = [_pick(r, cols_without_mode) for r in rows]
+                client.table("trading_signals").insert(cleaned_fallback).execute()
+            else:
+                raise exc

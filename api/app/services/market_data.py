@@ -32,14 +32,24 @@ def fetch_stock_profile(symbol: str) -> dict[str, Any]:
     }
 
 
-def fetch_price_history(symbol: str, period: str = "6mo") -> Any:
+def fetch_price_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Any:
     symbol = normalize_symbol(symbol)
-    history = yf.Ticker(symbol).history(period=period, auto_adjust=True)
+    history = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
     if history.empty and symbol.endswith(".NS"):
         # Fallback: some tickers resolve better on BSE
         alt = symbol.replace(".NS", ".BO")
-        history = yf.Ticker(alt).history(period=period, auto_adjust=True)
+        history = yf.Ticker(alt).history(period=period, interval=interval, auto_adjust=True)
     return history
+
+
+def fetch_intraday_history(symbol: str, period: str = "5d", interval: str = "60m") -> Any:
+    """Fetch intraday candle data (60-min intervals, 5-day lookback)."""
+    return fetch_price_history(symbol, period=period, interval=interval)
+
+
+def fetch_longterm_history(symbol: str, period: str = "1y") -> Any:
+    """Fetch 1-year daily history for long-term analysis."""
+    return fetch_price_history(symbol, period=period, interval="1d")
 
 
 def fetch_news(symbol: str, limit: int = 8) -> list[dict[str, Any]]:

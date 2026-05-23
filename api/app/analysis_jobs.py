@@ -16,13 +16,13 @@ def _update(job_id: str, **fields: Any) -> None:
             _jobs[job_id].update(fields)
 
 
-def _run_job(job_id: str) -> None:
+def _run_job(job_id: str, mode: str = "swing", target_date: str | None = None) -> None:
     def on_progress(done: int, total: int, phase: str, message: str) -> None:
         pct = int((done / total) * 100) if total else 0
         _update(job_id, progress=pct, total=total, done=done, phase=phase, message=message)
 
     try:
-        result = analyzer.run_full_analysis(progress_callback=on_progress)
+        result = analyzer.run_full_analysis(mode=mode, target_date=target_date, progress_callback=on_progress)
         _update(
             job_id,
             status="completed",
@@ -39,7 +39,7 @@ def _run_job(job_id: str) -> None:
         )
 
 
-def start_job() -> str:
+def start_job(mode: str = "swing", target_date: str | None = None) -> str:
     from app.services import market_data
 
     job_id = str(uuid.uuid4())
@@ -55,8 +55,10 @@ def start_job() -> str:
             "message": "Starting analysis…",
             "result": None,
             "error": None,
+            "trade_mode": mode,
+            "target_date": target_date,
         }
-    thread = threading.Thread(target=_run_job, args=(job_id,), daemon=True)
+    thread = threading.Thread(target=_run_job, args=(job_id, mode, target_date), daemon=True)
     thread.start()
     return job_id
 
