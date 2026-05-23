@@ -45,7 +45,7 @@ export function Dashboard() {
     can_backtest: true,
     can_use_portfolio: true,
   });
-  const [activeTab, setActiveTab] = useState<"main" | "admin">("main");
+  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin">("scans");
 
   // Impersonation state
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
@@ -114,7 +114,7 @@ export function Dashboard() {
     sessionStorage.setItem("impersonated_email", email);
     sessionStorage.setItem("impersonated_id", id);
     sessionStorage.setItem("impersonated_permissions", JSON.stringify(userPermissions));
-    setActiveTab("main");
+    setActiveTab("scans");
   };
 
   const handleExitImpersonation = () => {
@@ -197,37 +197,98 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* 2. Admin control panel navigation tabs */}
-      {sessionUser?.role === "admin" && !impersonatedEmail && (
-        <div className="mb-8 flex gap-4 border-b border-slate-900 pb-4">
-          <button
-            onClick={() => setActiveTab("main")}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border ${
-              activeTab === "main"
-                ? "bg-slate-100 text-slate-900 border-slate-200"
-                : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-            }`}
-          >
-            🎯 Trader Dashboard
-          </button>
+      {/* 2. Premium sticky glassmorphic navigation tabs */}
+      <div className="mb-8 flex flex-wrap gap-2.5 border-b border-slate-900 pb-5 items-center">
+        <button
+          onClick={() => setActiveTab("scans")}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            activeTab === "scans"
+              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
+              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          🎯 Scans & Recs
+        </button>
+
+        <button
+          onClick={() => {
+            if (permissions.can_view_signals !== false) {
+              setActiveTab("signals");
+            }
+          }}
+          disabled={permissions.can_view_signals === false}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            permissions.can_view_signals === false ? "opacity-45 cursor-not-allowed" : ""
+          } ${
+            activeTab === "signals"
+              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
+              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          ⚡ Momentum Signals {permissions.can_view_signals === false && "🔒"}
+        </button>
+
+        <button
+          onClick={() => {
+            if (permissions.can_backtest !== false) {
+              setActiveTab("backtest");
+            }
+          }}
+          disabled={permissions.can_backtest === false}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            permissions.can_backtest === false ? "opacity-45 cursor-not-allowed" : ""
+          } ${
+            activeTab === "backtest"
+              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
+              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          🧪 Backtest Labs {permissions.can_backtest === false && "🔒"}
+        </button>
+
+        <button
+          onClick={() => {
+            if (permissions.can_use_portfolio !== false) {
+              setActiveTab("portfolio");
+            }
+          }}
+          disabled={permissions.can_use_portfolio === false}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            permissions.can_use_portfolio === false ? "opacity-45 cursor-not-allowed" : ""
+          } ${
+            activeTab === "portfolio"
+              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
+              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          💼 My Portfolio {permissions.can_use_portfolio === false && "🔒"}
+        </button>
+
+        {sessionUser?.role === "admin" && !impersonatedEmail && (
           <button
             onClick={() => setActiveTab("admin")}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 sm:ml-auto ${
               activeTab === "admin"
                 ? "bg-purple-600 text-white border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.3)]"
-                : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+                : "bg-slate-950 text-purple-400 border-slate-900/60 hover:text-purple-300 hover:bg-slate-900/10"
             }`}
           >
             🛡️ Admin Control Center
           </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mb-6 rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          {error}
         </div>
       )}
 
+      {/* Render active tab content */}
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
-      ) : (
+      ) : activeTab === "scans" ? (
         <>
-          {/* Main Trader Dashboard tab */}
           {permissions.can_view_recommendations === false ? (
             <div className="mb-6 p-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 text-rose-400 text-sm text-center font-bold">
               🔒 Access Restricted: Scanner Recommendations are locked by Administrator Vikas Rai.
@@ -261,65 +322,43 @@ export function Dashboard() {
                   )}
                 </div>
               </section>
+
+              {permissions.can_view_heatmap !== false && !loading && recs.length > 0 && (
+                <SectorHeatmap recs={recs} />
+              )}
+
+              <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
+                {loading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-slate-950/70 backdrop-blur-sm min-h-[120px]">
+                    <p className="text-sm text-slate-300">Updating results when analysis finishes…</p>
+                  </div>
+                )}
+                {recs.length === 0 ? (
+                  <p className="text-slate-500 py-6">
+                    {getEmptyStateText()}
+                  </p>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {recs.map((rec) => (
+                      <RecommendationCard
+                        key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`}
+                        rec={rec}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           )}
-
-          {error && (
-            <div className="mb-6 rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
-              {error}
-            </div>
-          )}
-
-          {permissions.can_backtest === false ? (
-            <div className="mb-8 p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 Backtest Labs are deactivated on your user account by admin.
-            </div>
-          ) : (
-            <BacktestSimulator currentMode={mode} />
-          )}
-
-          {permissions.can_view_heatmap !== false && permissions.can_view_recommendations !== false && !loading && recs.length > 0 && (
-            <SectorHeatmap recs={recs} />
-          )}
-
-          {permissions.can_view_recommendations !== false && (
-            <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
-              {loading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-slate-950/70 backdrop-blur-sm min-h-[120px]">
-                  <p className="text-sm text-slate-300">Updating results when analysis finishes…</p>
-                </div>
-              )}
-              {recs.length === 0 && !error ? (
-                <p className="text-slate-500 py-6">
-                  {getEmptyStateText()}
-                </p>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {recs.map((rec) => (
-                    <RecommendationCard
-                      key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`}
-                      rec={rec}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {permissions.can_use_portfolio === false ? (
-            <div className="mt-12 mb-12 p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 Portfolio & Watchlists Labs are locked by the administrator.
-            </div>
-          ) : (
-            <UserWorkspace />
-          )}
-
+        </>
+      ) : activeTab === "signals" ? (
+        <>
           {permissions.can_view_signals === false ? (
-            <div className="mt-12 p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
+            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
               🔒 Momentum Breakdowns signals list are restricted on your profile.
             </div>
           ) : (
-            <section className="mt-12 rounded-xl border border-slate-800 bg-slate-900/25 p-6">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/25 p-6">
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
                 <h2 className="text-xl font-bold tracking-tight text-white">{getSignalsTitle()}</h2>
                 <div className="flex items-center gap-1.5 rounded-lg bg-slate-950 p-1 border border-slate-800">
@@ -349,6 +388,29 @@ export function Dashboard() {
               </div>
               <SignalList signals={filteredSignals} />
             </section>
+          )}
+        </>
+      ) : activeTab === "backtest" ? (
+        <>
+          {permissions.can_backtest === false ? (
+            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
+              🔒 Backtest Labs are deactivated on your user account by admin.
+            </div>
+          ) : (
+            <BacktestSimulator currentMode={mode} />
+          )}
+        </>
+      ) : (
+        <>
+          {permissions.can_use_portfolio === false ? (
+            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
+              🔒 Portfolio & Watchlists Labs are locked by the administrator.
+            </div>
+          ) : (
+            <UserWorkspace
+              userId={impersonatedId || sessionUser?.id || undefined}
+              userEmail={impersonatedEmail || sessionUser?.email || undefined}
+            />
           )}
         </>
       )}

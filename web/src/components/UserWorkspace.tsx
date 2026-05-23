@@ -13,7 +13,12 @@ import {
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 
-export default function UserWorkspace() {
+interface UserWorkspaceProps {
+  userId?: string;
+  userEmail?: string;
+}
+
+export default function UserWorkspace({ userId: propUserId, userEmail: propUserEmail }: UserWorkspaceProps = {}) {
   const [userId, setUserId] = useState<string>("default-trader-admin");
   const [watchlist, setWatchlist] = useState<UserWatchlistItem[]>([]);
   const [portfolio, setPortfolio] = useState<UserPortfolioResponse | null>(null);
@@ -34,8 +39,13 @@ export default function UserWorkspace() {
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<any>(null);
 
-  // Load user session if available
+  // Load user session if available, respecting the propUserId if passed
   useEffect(() => {
+    if (propUserId) {
+      setUserId(propUserId);
+      return;
+    }
+    
     async function checkUser() {
       try {
         const supabase = createClient();
@@ -48,7 +58,7 @@ export default function UserWorkspace() {
       }
     }
     checkUser();
-  }, []);
+  }, [propUserId]);
 
   const loadData = useCallback(async () => {
     try {
@@ -190,7 +200,7 @@ export default function UserWorkspace() {
         {/* 2. Personal Watchlist Section */}
         <div className="rounded-3xl border border-slate-800 bg-slate-950/60 backdrop-blur-xl p-6 shadow-2xl flex-1 flex flex-col">
           <h3 className="text-md font-extrabold text-slate-100 tracking-wide flex items-center gap-2 mb-4">
-            👥 Personal Watchlist
+            👥 Personal Watchlist {propUserEmail && <span className="text-slate-400 font-normal">({propUserEmail})</span>}
           </h3>
 
           <form onSubmit={handleAddToWatchlist} className="flex gap-2 mb-4">
@@ -264,7 +274,7 @@ export default function UserWorkspace() {
           <div className="flex justify-between items-start border-b border-slate-900/60 pb-4 mb-6">
             <div>
               <h3 className="text-md font-extrabold text-slate-100 tracking-wide flex items-center gap-2">
-                💼 Share Holdings Portfolio
+                💼 Share Holdings Portfolio {propUserEmail && <span className="text-slate-400 font-normal">({propUserEmail})</span>}
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 Real-time transaction tracking and evaluation of active share holdings in Indian Rupees.
