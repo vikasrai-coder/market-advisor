@@ -30,6 +30,24 @@ SMALL_CAP = [
     "SUZLON.NS", "NH.NS", "CARTRADE.NS", "CRAFTSMAN.NS", "ZENTEC.NS",
 ]
 
+import json
+import os
+
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "watchlists_cache.json")
+
+if os.path.exists(CACHE_FILE):
+    try:
+        with open(CACHE_FILE, "r") as _f:
+            _cache = json.load(_f)
+            if _cache.get("large"):
+                LARGE_CAP = _cache["large"]
+            if _cache.get("mid"):
+                MID_CAP = _cache["mid"]
+            if _cache.get("small"):
+                SMALL_CAP = _cache["small"]
+    except Exception:
+        pass
+
 WATCHLIST_BY_SEGMENT: dict[str, list[str]] = {
     "large": LARGE_CAP,
     "mid": MID_CAP,

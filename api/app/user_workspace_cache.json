@@ -1,0 +1,16 @@
+{
+  "user_watchlists": {
+    "test-trader-1": [
+      "INFY.NS"
+    ]
+  },
+  "user_portfolios": {
+    "test-trader-1": [
+      {
+        "symbol": "RELIANCE.NS",
+        "shares_quantity": 20.0,
+        "buy_price": 2433.33
+      }
+    ]
+  }
+}

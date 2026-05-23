@@ -24,9 +24,36 @@ export function LoginForm() {
 
     setLoading(false);
     if (signInError) {
+      // Fallback: try logging in via our custom local API endpoint (offline/cache credentials)
+      try {
+        const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        const res = await fetch(`${API_URL}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim(), password }),
+        });
+        if (res.ok) {
+          const authData = await res.json();
+          localStorage.setItem("offline_user_id", authData.user_id);
+          localStorage.setItem("offline_user_email", authData.email);
+          localStorage.setItem("offline_user_role", authData.role);
+          localStorage.setItem("offline_user_permissions", JSON.stringify(authData.permissions));
+          router.push("/");
+          router.refresh();
+          return;
+        }
+      } catch (err) {
+        // Fallback failed
+      }
       setError(signInError.message);
       return;
     }
+
+    // Successful Supabase auth login
+    localStorage.removeItem("offline_user_id");
+    localStorage.removeItem("offline_user_email");
+    localStorage.removeItem("offline_user_role");
+    localStorage.removeItem("offline_user_permissions");
     router.push("/");
     router.refresh();
   }

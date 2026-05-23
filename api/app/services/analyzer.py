@@ -95,6 +95,22 @@ def run_full_analysis(
             )
 
     scored.sort(key=lambda x: x["composite_score"], reverse=True)
+
+    # Compute sector median valuation levels (Relative Valuation Index)
+    import statistics
+    sector_pes = {}
+    for item in scored:
+        sec_name = item["profile"].get("sector")
+        pe_val = item["profile"].get("pe_ratio")
+        if sec_name and pe_val is not None and pe_val > 0:
+            if sec_name not in sector_pes:
+                sector_pes[sec_name] = []
+            sector_pes[sec_name].append(pe_val)
+    sector_medians = {}
+    for sec_name, pes_list in sector_pes.items():
+        if len(pes_list) >= 2:
+            sector_medians[sec_name] = statistics.median(pes_list)
+
     top_buys = _select_diversified_top_buys(scored, count=cfg.top_picks)
 
     recommendations: list[dict[str, Any]] = []
@@ -124,6 +140,14 @@ def run_full_analysis(
         target_price = _target_for_mode(item["metrics"].get("price"), cfg.mode)
         stop_loss = _stop_for_mode(item["metrics"].get("price"), cfg.mode)
 
+        # Quantitative relative valuation scoring vs sector medians
+        item_sector = item["profile"].get("sector")
+        item_pe = item["profile"].get("pe_ratio")
+        is_undervalued = False
+        if item_sector and item_pe is not None and item_pe > 0 and item_sector in sector_medians:
+            if item_pe < sector_medians[item_sector] * 0.8:
+                is_undervalued = True
+
         rec = {
             "id": str(uuid.uuid4()),
             "run_id": run_id,
@@ -152,12 +176,14 @@ def run_full_analysis(
             "range_52w_pct": item["metrics"].get("range_52w_pct"),
             "pe_ratio": item["metrics"].get("pe_ratio"),
             "dividend_yield": item["metrics"].get("dividend_yield"),
+            "is_undervalued": is_undervalued,
             # Dynamic stock sub-object for local/memory fallback completeness
             "stocks": {
                 "name": item["profile"].get("name"),
                 "sector": item["profile"].get("sector"),
                 "pe_ratio": item["profile"].get("pe_ratio"),
                 "market_cap": item["profile"].get("market_cap"),
+                "is_undervalued": is_undervalued,
             },
         }
         recommendations.append(rec)
@@ -237,6 +263,14 @@ def run_full_analysis(
         "supabase_persisted": client is not None,
     }
     _last_result = result
+
+    # Broadcast to Telegram if configured
+    try:
+        from app.services.notifier import send_telegram_recommendations
+        send_telegram_recommendations(recommendations, cfg.label)
+    except Exception:
+        pass
+
     report(total_symbols, total_symbols, "done", "Complete")
     return result
 

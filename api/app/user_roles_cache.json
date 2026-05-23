@@ -1,0 +1,36 @@
+{
+  "profiles": {
+    "admin-vikas-id": {
+      "id": "dce15e73-c7e6-4d09-b2a5-cad44f99ea09",
+      "user_id": "admin-vikas-id",
+      "email": "vikas.raiexp@gmail.com",
+      "role": "admin",
+      "permissions": {
+        "can_view_charts": true,
+        "can_view_recommendations": true,
+        "can_view_heatmap": true,
+        "can_view_signals": true,
+        "can_backtest": true,
+        "can_use_portfolio": true
+      },
+      "created_at": "2026-05-23T14:44:22.149243",
+      "offline_password": "DellCompaq@123"
+    },
+    "8ef2fb4c-c764-40b9-bb84-7a64c6f34719": {
+      "user_id": "8ef2fb4c-c764-40b9-bb84-7a64c6f34719",
+      "email": "test-user-vikas@gmail.com",
+      "role": "user",
+      "permissions": {
+        "can_view_charts": true,
+        "can_view_recommendations": true,
+        "can_view_heatmap": false,
+        "can_view_signals": true,
+        "can_backtest": false,
+        "can_use_portfolio": true
+      },
+      "id": "ac041d9e-ef4d-49b9-a700-bf9e656492a0",
+      "created_at": "2026-05-23T14:44:22.763219",
+      "offline_password": "VikasPassword@123"
+    }
+  }
+}

@@ -82,6 +82,247 @@ class AnalysisRequest(BaseModel):
     target_date: str | None = None
 
 
+class BacktestRequest(BaseModel):
+    mode: str = "swing"
+    start_date: str
+    check_days: int = 5
+
+
+class WatchlistActionRequest(BaseModel):
+    user_id: str
+    symbol: str
+
+
+class PortfolioBuyRequest(BaseModel):
+    user_id: str
+    symbol: str
+    quantity: float
+    buy_price: float
+
+
+class PortfolioSellRequest(BaseModel):
+    user_id: str
+    symbol: str
+    quantity: float
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserCreateRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserPermissionsRequest(BaseModel):
+    user_id: str
+    permissions: dict
+
+
+class AdminTradeRequest(BaseModel):
+    symbol: str
+    quantity: float
+    buy_price: float
+
+
+class AdminTradeCloseRequest(BaseModel):
+    trade_id: str
+    sell_price: float
+
+
+@app.post("/api/backtest/simulate")
+def simulate_backtest(req: BacktestRequest):
+    try:
+        from app.services.backtester import run_backtest_simulation
+        res = run_backtest_simulation(
+            mode=req.mode,
+            start_date_str=req.start_date,
+            check_days=req.check_days,
+        )
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/login")
+def login_endpoint(req: LoginRequest):
+    email = req.email.strip()
+    password = req.password
+    
+    # 1. Check master designated admin credentials
+    from app.services.user_roles import ADMIN_EMAIL, get_user_role_profile, get_all_roles_profiles
+    if email.lower() == ADMIN_EMAIL.lower() and password == "DellCompaq@123":
+        # Ensure role profile is seeded
+        profile = get_user_role_profile("admin-vikas-id", ADMIN_EMAIL)
+        return {
+            "user_id": "admin-vikas-id",
+            "email": ADMIN_EMAIL,
+            "role": "admin",
+            "permissions": profile["permissions"],
+        }
+        
+    # 2. Check offline users registry
+    profiles = get_all_roles_profiles()
+    for p in profiles:
+        if p["email"].lower() == email.lower() and p.get("offline_password") == password:
+            return {
+                "user_id": p["user_id"],
+                "email": p["email"],
+                "role": p["role"],
+                "permissions": p["permissions"],
+            }
+            
+    # Check if there is an auth user inside Supabase (if Supabase is active)
+    # Since Supabase handles client logins directly, this endpoint acts as a complete fallback
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.get("/api/user/profile")
+def get_user_profile_endpoint(user_id: str, email: str | None = None):
+    try:
+        from app.services.user_role_profile = get_user_role_profile
+        profile = get_user_role_profile(user_id, email)
+        return profile
+    except Exception as exc:
+        # Avoid import errors if service isn't active
+        try:
+            from app.services.user_roles import get_user_role_profile
+            profile = get_user_role_profile(user_id, email)
+            return profile
+        except Exception:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/users")
+def get_admin_users():
+    try:
+        from app.services.user_roles import get_all_roles_profiles
+        return {"users": get_all_roles_profiles()}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/user/create")
+def admin_create_user(req: UserCreateRequest):
+    try:
+        from app.services.user_roles import create_user_admin
+        profile = create_user_admin(req.email, req.password)
+        return {"success": True, "profile": profile}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/user/permissions")
+def admin_set_user_permissions(req: UserPermissionsRequest):
+    try:
+        from app.services.user_roles import set_user_permissions
+        success = set_user_permissions(req.user_id, req.permissions)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/trades")
+def admin_get_trades_endpoint():
+    try:
+        from app.services.user_roles import get_admin_trades
+        return {"trades": get_admin_trades()}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/trades/buy")
+def admin_buy_trade_endpoint(req: AdminTradeRequest):
+    try:
+        from app.services.user_roles import record_admin_trade
+        success = record_admin_trade(req.symbol, req.quantity, req.buy_price)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/trades/sell")
+def admin_sell_trade_endpoint(req: AdminTradeCloseRequest):
+    try:
+        from app.services.user_roles import close_admin_trade
+        success = close_admin_trade(req.trade_id, req.sell_price)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+
+@app.post("/api/watchlist/sync")
+def sync_watchlist():
+    try:
+        from app.services.watchlist_sync import sync_nse_watchlists
+        summary = sync_nse_watchlists()
+        return summary
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/user/watchlist")
+def get_watchlist_endpoint(user_id: str):
+    try:
+        from app.services.user_workspace import get_user_watchlist
+        return {"watchlist": get_user_watchlist(user_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/watchlist/add")
+def add_to_watchlist_endpoint(req: WatchlistActionRequest):
+    try:
+        from app.services.user_workspace import add_to_watchlist
+        success = add_to_watchlist(req.user_id, req.symbol)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/watchlist/remove")
+def remove_from_watchlist_endpoint(req: WatchlistActionRequest):
+    try:
+        from app.services.user_workspace import remove_from_watchlist
+        success = remove_from_watchlist(req.user_id, req.symbol)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/user/portfolio")
+def get_portfolio_endpoint(user_id: str):
+    try:
+        from app.services.user_workspace import get_user_portfolio
+        return get_user_portfolio(user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/portfolio/buy")
+def buy_holding_endpoint(req: PortfolioBuyRequest):
+    try:
+        from app.services.user_workspace import add_to_portfolio
+        success = add_to_portfolio(req.user_id, req.symbol, req.quantity, req.buy_price)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/portfolio/sell")
+def sell_holding_endpoint(req: PortfolioSellRequest):
+    try:
+        from app.services.user_workspace import sell_from_portfolio
+        success = sell_from_portfolio(req.user_id, req.symbol, req.quantity)
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+
 @app.post("/api/analysis/run")
 def run_analysis(req: AnalysisRequest = None):
     # Support both json body or default

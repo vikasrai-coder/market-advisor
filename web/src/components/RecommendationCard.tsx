@@ -53,6 +53,11 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
               {rec.cap_segment}
             </span>
           )}
+          {rec.stocks?.is_undervalued && (
+            <span className="ml-1.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide uppercase shadow-[0_0_8px_rgba(245,158,11,0.15)]">
+              🔥 Under Valued
+            </span>
+          )}
           <h3 className="mt-2.5 text-xl font-bold text-white">
             {rec.symbol.replace(".NS", "").replace(".BO", "")}
           </h3>

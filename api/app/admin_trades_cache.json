@@ -1,0 +1,15 @@
+{
+  "trades": {
+    "a54435b1-6eab-4b89-942f-97c0d6135b27": {
+      "symbol": "RELIANCE.NS",
+      "shares_quantity": 10.0,
+      "buy_price": 2400.0,
+      "trade_status": "closed",
+      "id": "a54435b1-6eab-4b89-942f-97c0d6135b27",
+      "display_symbol": "RELIANCE",
+      "created_at": "2026-05-23T14:44:23.677641",
+      "sell_price": 2500.0,
+      "profit_loss": 1000.0
+    }
+  }
+}

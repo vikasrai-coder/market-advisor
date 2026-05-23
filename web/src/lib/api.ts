@@ -26,11 +26,13 @@ export type Recommendation = {
   range_52w_pct?: number;
   pe_ratio?: number;
   dividend_yield?: number;
+  is_undervalued?: boolean;
   stocks?: {
     name: string;
     sector: string;
     pe_ratio: number;
     market_cap: number;
+    is_undervalued?: boolean;
   };
 };
 
@@ -165,3 +167,198 @@ export async function waitForAnalysisJob(
   }
   throw new Error("Analysis timed out. Check back in a minute and refresh the page.");
 }
+
+export type BacktestResult = {
+  rank: number;
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  sector: string | null;
+  is_undervalued: boolean;
+  composite_score: number;
+  rsi: number | null;
+  macd: number | null;
+  entry_price: number;
+  target_price: number;
+  stop_loss: number;
+  outcome: "target_hit" | "stopped_out" | "held" | "insufficient_data";
+  exit_price: number;
+  exit_date: string | null;
+  return_pct: number;
+};
+
+export type BacktestResponse = {
+  mode: TradeMode;
+  start_date: string;
+  check_days: number;
+  metrics: {
+    win_rate: number;
+    avg_return: number;
+    total_picks: number;
+    target_hits: number;
+    stop_hits: number;
+    held: number;
+    index_return: number;
+    outperformance: number;
+  };
+  results: BacktestResult[];
+  errors: string[];
+};
+
+export async function runBacktest(mode: TradeMode, startDate: string, checkDays = 5) {
+  return fetchJson<BacktestResponse>("/api/backtest/simulate", {
+    method: "POST",
+    body: JSON.stringify({ mode, start_date: startDate, check_days: checkDays }),
+  });
+}
+
+export type UserWatchlistItem = {
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  sector: string;
+  price: number;
+  change_pct: number;
+};
+
+export type UserPortfolioItem = {
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  shares_quantity: number;
+  buy_price: number;
+  current_price: number;
+  investment: number;
+  current_value: number;
+  profit_loss: number;
+  profit_loss_pct: number;
+};
+
+export type UserPortfolioResponse = {
+  summary: {
+    total_investment: number;
+    total_current_value: number;
+    total_profit_loss: number;
+    total_profit_loss_pct: number;
+  };
+  holdings: UserPortfolioItem[];
+};
+
+export async function syncWatchlist() {
+  return fetchJson<{
+    success: boolean;
+    large_count: number;
+    mid_count: number;
+    small_count: number;
+    updated_at: string;
+  }>("/api/watchlist/sync", { method: "POST" });
+}
+
+export async function getUserWatchlist(userId: string) {
+  return fetchJson<{ watchlist: UserWatchlistItem[] }>(`/api/user/watchlist?user_id=${userId}`);
+}
+
+export async function addToWatchlist(userId: string, symbol: string) {
+  return fetchJson<{ success: boolean }>("/api/user/watchlist/add", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, symbol }),
+  });
+}
+
+export async function removeFromWatchlist(userId: string, symbol: string) {
+  return fetchJson<{ success: boolean }>("/api/user/watchlist/remove", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, symbol }),
+  });
+}
+
+export async function getUserPortfolio(userId: string) {
+  return fetchJson<UserPortfolioResponse>(`/api/user/portfolio?user_id=${userId}`);
+}
+
+export async function buyHolding(userId: string, symbol: string, quantity: number, buyPrice: number) {
+  return fetchJson<{ success: boolean }>("/api/user/portfolio/buy", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, symbol, quantity, buy_price: buyPrice }),
+  });
+}
+
+export async function sellHolding(userId: string, symbol: string, quantity: number) {
+  return fetchJson<{ success: boolean }>("/api/user/portfolio/sell", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, symbol, quantity }),
+  });
+}
+
+export type UserRoleProfile = {
+  id?: string;
+  user_id: string;
+  email: string;
+  role: "admin" | "user";
+  permissions: {
+    can_view_charts: boolean;
+    can_view_recommendations: boolean;
+    can_view_heatmap: boolean;
+    can_view_signals: boolean;
+    can_backtest: boolean;
+    can_use_portfolio: boolean;
+  };
+  offline_password?: string;
+  created_at?: string;
+};
+
+export type AdminTrade = {
+  id?: string;
+  symbol: string;
+  display_symbol?: string;
+  shares_quantity: number;
+  buy_price: number;
+  sell_price: number | null;
+  trade_status: "open" | "closed";
+  profit_loss: number | null;
+  created_at?: string;
+};
+
+export async function getUserProfile(userId: string, email?: string) {
+  const q = email ? `&email=${email}` : "";
+  return fetchJson<UserRoleProfile>(`/api/user/profile?user_id=${userId}${q}`);
+}
+
+export async function adminGetUsers() {
+  return fetchJson<{ users: UserRoleProfile[] }>("/api/admin/users");
+}
+
+export async function adminCreateUser(email: string, password: string) {
+  return fetchJson<{ success: boolean; profile: UserRoleProfile }>("/api/admin/user/create", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function adminSetPermissions(userId: string, permissions: UserRoleProfile["permissions"]) {
+  return fetchJson<{ success: boolean }>("/api/admin/user/permissions", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, permissions }),
+  });
+}
+
+export async function adminGetTrades() {
+  return fetchJson<{ trades: AdminTrade[] }>("/api/admin/trades");
+}
+
+export async function adminBuyTrade(symbol: string, quantity: number, buyPrice: number) {
+  return fetchJson<{ success: boolean }>("/api/admin/trades/buy", {
+    method: "POST",
+    body: JSON.stringify({ symbol, quantity, buy_price: buyPrice }),
+  });
+}
+
+export async function adminSellTrade(tradeId: string, sellPrice: number) {
+  return fetchJson<{ success: boolean }>("/api/admin/trades/sell", {
+    method: "POST",
+    body: JSON.stringify({ trade_id: tradeId, sell_price: sellPrice }),
+  });
+}
+
+
+
