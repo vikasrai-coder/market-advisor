@@ -30,6 +30,11 @@ def _run_job(job_id: str, mode: str = "swing", target_date: str | None = None) -
             message="Analysis complete",
             result=result,
         )
+        try:
+            from app.services.redis_cache import invalidate_all_caches
+            invalidate_all_caches()
+        except Exception as e:
+            print(f"Failed to invalidate cache after job run: {e}")
     except Exception as exc:
         _update(
             job_id,

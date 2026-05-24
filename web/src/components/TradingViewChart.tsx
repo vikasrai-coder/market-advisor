@@ -8,8 +8,6 @@ const OVERVIEW_SCRIPT_SRC = "https://s3.tradingview.com/external-embedding/embed
 export function TradingViewChart({ symbol }: { symbol: string }) {
   const advancedRef = useRef<HTMLDivElement>(null);
   const overviewRef = useRef<HTMLDivElement>(null);
-  const [activeTab, setActiveTab] = useState<"advanced" | "overview">("advanced");
-  const [loaded, setLoaded] = useState(false);
 
   // Normalize symbol: WIPRO.NS -> NSE:WIPRO, WIPRO.BO -> BSE:WIPRO, AAPL -> NASDAQ:AAPL
   const formatSymbol = (sym: string): string => {
@@ -24,6 +22,9 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
   const tvSymbol = formatSymbol(symbol);
   const cleanSymbol = symbol.replace(".NS", "").replace(".BO", "").toUpperCase();
 
+  const [activeTab, setActiveTab] = useState<"advanced" | "overview">(isIndian ? "overview" : "advanced");
+  const [loaded, setLoaded] = useState(false);
+
   // TradingView link
   const tvUrl = isIndian
     ? `https://www.tradingview.com/symbols/${tvSymbol.replace(":", "-")}/`
@@ -32,7 +33,8 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
   // ── Advanced Chart Widget ─────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== "advanced" || !advancedRef.current) return;
-    advancedRef.current.innerHTML = "";
+    const container = advancedRef.current;
+    container.innerHTML = "";
     setLoaded(false);
 
     const widgetDiv = document.createElement("div");
@@ -73,18 +75,17 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
     script.innerHTML = JSON.stringify(config);
     script.onload = () => setLoaded(true);
 
-    advancedRef.current.appendChild(widgetDiv);
-    advancedRef.current.appendChild(script);
+    container.appendChild(widgetDiv);
+    container.appendChild(script);
 
-    return () => {
-      if (advancedRef.current) advancedRef.current.innerHTML = "";
-    };
+    // We do NOT clear container on unmount to prevent s3.tradingview.com querySelector errors.
   }, [tvSymbol, activeTab]);
 
   // ── Symbol Overview Widget ───────────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== "overview" || !overviewRef.current) return;
-    overviewRef.current.innerHTML = "";
+    const container = overviewRef.current;
+    container.innerHTML = "";
     setLoaded(false);
 
     // For Indian stocks, TradingView overview widget needs NSE:SYMBOL format
@@ -133,12 +134,10 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
     script.innerHTML = JSON.stringify(config);
     script.onload = () => setLoaded(true);
 
-    overviewRef.current.appendChild(widgetDiv);
-    overviewRef.current.appendChild(script);
+    container.appendChild(widgetDiv);
+    container.appendChild(script);
 
-    return () => {
-      if (overviewRef.current) overviewRef.current.innerHTML = "";
-    };
+    // We do NOT clear container on unmount to prevent s3.tradingview.com querySelector errors.
   }, [tvSymbol, activeTab, isIndian, cleanSymbol]);
 
   return (
@@ -161,16 +160,18 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
 
         {/* View tabs */}
         <div className="flex items-center gap-1 bg-slate-900/70 rounded-lg p-1 border border-slate-800/60">
-          <button
-            onClick={() => setActiveTab("advanced")}
-            className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-              activeTab === "advanced"
-                ? "bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.3)]"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            📈 Advanced Chart
-          </button>
+          {!isIndian && (
+            <button
+              onClick={() => setActiveTab("advanced")}
+              className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeTab === "advanced"
+                  ? "bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.3)]"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              📈 Advanced Chart
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("overview")}
             className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
@@ -229,21 +230,28 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
       </div>
 
       {/* ── Footer note ────────────────────────────────────────────── */}
-      <div className="px-5 py-3 border-t border-slate-800/60 bg-slate-950/40 flex items-center gap-2 text-[10px] text-slate-500">
-        <span>📊</span>
-        <span>
-          Powered by{" "}
-          <a
-            href="https://www.tradingview.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-400 hover:text-blue-300 font-bold underline underline-offset-2"
-          >
-            TradingView
-          </a>
-          {" "}· Indicators: RSI, MACD, Bollinger Bands, Volume ·{" "}
-          {isIndian ? "Exchange: NSE India" : "Exchange: US Markets"}
-        </span>
+      <div className="px-5 py-3 border-t border-slate-800/60 bg-slate-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[10px] text-slate-500">
+        <div className="flex items-center gap-2">
+          <span>📊</span>
+          <span>
+            Powered by{" "}
+            <a
+              href="https://www.tradingview.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 font-bold underline underline-offset-2"
+            >
+              TradingView
+            </a>
+            {" "}· Indicators: RSI, MACD, Bollinger Bands, Volume ·{" "}
+            {isIndian ? "Exchange: NSE India" : "Exchange: US Markets"}
+          </span>
+        </div>
+        {isIndian && (
+          <span className="text-emerald-500/90 font-medium">
+            💡 For full interactive charting, click <strong>Full Screen ↗</strong>
+          </span>
+        )}
       </div>
     </div>
   );

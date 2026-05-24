@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     watchlist_symbols: str = ""
     market: str = "IN"
+    redis_url: str = "redis://localhost:6379/0"
 
     @property
     def watchlist(self) -> list[str]:

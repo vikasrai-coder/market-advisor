@@ -426,21 +426,33 @@ def run_reconcile():
 
 @app.get("/api/recommendations")
 def list_recommendations(trade_date: str | None = None, mode: str | None = None):
+    # Try getting from Redis cache
+    from app.services.redis_cache import get_cache, set_cache
+    cache_key = f"recommendations:{mode or 'all'}:{trade_date or 'latest'}"
+    cached_data = get_cache(cache_key)
+    if cached_data is not None:
+        return cached_data
+
     client = get_client()
     if not client:
         cached = analyzer.get_last_result()
         if not cached:
-            return {"recommendations": [], "trade_date": None, "source": "memory"}
+            res_data = {"recommendations": [], "trade_date": None, "source": "memory"}
+            set_cache(cache_key, res_data, 3600)
+            return res_data
         recs = cached.get("top_recommendations") or []
         if mode:
             recs = [r for r in recs if r.get("trade_mode") == mode]
         if trade_date:
             recs = [r for r in recs if r.get("trade_date") == trade_date]
-        return {
+        res_data = {
             "recommendations": recs,
             "trade_date": cached.get("trade_date"),
             "source": "memory",
         }
+        set_cache(cache_key, res_data, 3600)
+        return res_data
+
     target_date = trade_date
     if not target_date:
         latest_query = (
@@ -489,14 +501,25 @@ def list_recommendations(trade_date: str | None = None, mode: str | None = None)
                     row_mode = row.get("trade_mode", "swing")
                     if row_mode == mode:
                         filtered_data.append(row)
-                return {"recommendations": filtered_data, "trade_date": target_date, "trade_mode": mode}
+                res_data = {"recommendations": filtered_data, "trade_date": target_date, "trade_mode": mode}
+                set_cache(cache_key, res_data, 3600)
+                return res_data
         else:
             raise exc
-    return {"recommendations": result.data, "trade_date": target_date, "trade_mode": mode}
+    res_data = {"recommendations": result.data, "trade_date": target_date, "trade_mode": mode}
+    set_cache(cache_key, res_data, 3600)
+    return res_data
 
 
 @app.get("/api/signals")
 def list_signals(planned_trade_date: str | None = None, signal_type: str | None = None, mode: str | None = None):
+    # Try getting from Redis cache
+    from app.services.redis_cache import get_cache, set_cache
+    cache_key = f"signals:{mode or 'all'}:{planned_trade_date or 'latest'}:{signal_type or 'all'}"
+    cached_data = get_cache(cache_key)
+    if cached_data is not None:
+        return cached_data
+
     client = get_client()
     if not client:
         cached = analyzer.get_last_result()
@@ -507,7 +530,10 @@ def list_signals(planned_trade_date: str | None = None, signal_type: str | None 
             signals = [s for s in signals if s.get("planned_trade_date") == planned_trade_date]
         if signal_type:
             signals = [s for s in signals if s.get("signal_type") == signal_type]
-        return {"signals": signals, "source": "memory"}
+        res_data = {"signals": signals, "source": "memory"}
+        set_cache(cache_key, res_data, 3600)
+        return res_data
+
     query = client.table("trading_signals").select("*, stocks(name, sector)").order("created_at", desc=True)
     if planned_trade_date:
         query = query.eq("planned_trade_date", planned_trade_date)
@@ -535,15 +561,27 @@ def list_signals(planned_trade_date: str | None = None, signal_type: str | None 
                     row_mode = row.get("trade_mode", "swing")
                     if row_mode == mode:
                         filtered_data.append(row)
-                return {"signals": filtered_data}
+                res_data = {"signals": filtered_data}
+                set_cache(cache_key, res_data, 3600)
+                return res_data
         else:
             raise exc
-    return {"signals": result.data}
+    res_data = {"signals": result.data}
+    set_cache(cache_key, res_data, 3600)
+    return res_data
 
 
 @app.get("/api/stocks/{symbol}")
 def stock_detail(symbol: str):
     sym = normalize_symbol(symbol)
+    
+    # Try getting from Redis cache
+    from app.services.redis_cache import get_cache, set_cache
+    cache_key = f"stock_detail:{sym}"
+    cached_data = get_cache(cache_key)
+    if cached_data is not None:
+        return cached_data
+
     client = get_client()
     if not client:
         profile = market_data.fetch_stock_profile(sym)
@@ -557,13 +595,16 @@ def stock_detail(symbol: str):
             (r for r in cached.get("top_recommendations") or [] if r.get("symbol") == sym),
             None,
         )
-        return {
+        res_data = {
             "stock": profile,
             "metrics": [metrics_row] if metrics_row.get("price") else [],
             "news": news,
             "latest_recommendation": latest,
             "source": "yfinance",
         }
+        set_cache(cache_key, res_data, 7200)
+        return res_data
+
     stock = client.table("stocks").select("*").eq("symbol", sym).maybe_single().execute()
     metrics = (
         client.table("stock_metrics")
@@ -589,12 +630,14 @@ def stock_detail(symbol: str):
         .limit(1)
         .execute()
     )
-    return {
+    res_data = {
         "stock": stock.data if stock else None,
         "metrics": metrics.data if metrics else [],
         "news": news.data if news else [],
         "latest_recommendation": rec.data[0] if (rec and rec.data) else None,
     }
+    set_cache(cache_key, res_data, 7200)
+    return res_data
 
 
 if __name__ == "__main__":
