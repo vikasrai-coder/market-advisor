@@ -8,7 +8,16 @@ interface Message {
   content: string;
 }
 
-export default function ChatbotAdvisor() {
+interface ChatbotAdvisorProps {
+  prefill?: {
+    type: "single" | "portfolio";
+    holding?: { symbol: string; shares: number; buyPrice: number };
+    holdings?: { symbol: string; shares: number; buyPrice: number }[];
+  } | null;
+  onClearPrefill?: () => void;
+}
+
+export default function ChatbotAdvisor({ prefill, onClearPrefill }: ChatbotAdvisorProps = {}) {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -17,7 +26,7 @@ export default function ChatbotAdvisor() {
 I can help you analyze your stock holdings, calculate your current profits or losses, and suggest tailored strategies to recover capital or reinvest efficiently.
 
 **How can I help you today?**
-- Click **"Analyze my holding"** on the left to input stock purchase details.
+- Click **"Analyze my holding"** on the left to start a conversational step-by-step stock analysis (uses **0 AI tokens** for setup!).
 - Ask for short, medium, or long-term **"Loss recovery recommendations"** to scan optimal entry stocks.`
     }
   ]);
@@ -25,11 +34,11 @@ I can help you analyze your stock holdings, calculate your current profits or lo
   const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Predefined Holding Form / Wizard State
-  const [showWizard, setShowWizard] = useState<boolean>(false);
-  const [wizardSymbol, setWizardSymbol] = useState<string>("");
-  const [wizardShares, setWizardShares] = useState<number>(0);
-  const [wizardBuyPrice, setWizardBuyPrice] = useState<number>(0);
+  // Conversational Stock Holding Questionnaire State Machine (0 AI Tokens)
+  const [questionStep, setQuestionStep] = useState<"idle" | "ask_symbol" | "ask_shares" | "ask_price">("idle");
+  const [tempSymbol, setTempSymbol] = useState<string>("");
+  const [tempShares, setTempShares] = useState<number>(0);
+  const [tempBuyPrice, setTempBuyPrice] = useState<number>(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -37,23 +46,101 @@ I can help you analyze your stock holdings, calculate your current profits or lo
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const handleSendMessage = async (textToSend: string, isWizard = false) => {
-    if (!textToSend.trim() && !isWizard) return;
+  useEffect(() => {
+    if (prefill) {
+      setQuestionStep("idle");
+      setLoading(true);
+
+      if (prefill.type === "single" && prefill.holding) {
+        const { symbol, shares, buyPrice } = prefill.holding;
+        const userQuery = `Should I stay invested in ${symbol}? (Owned: ${shares} shares bought at ₹${buyPrice})`;
+
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `### 📈 Holding Analysis Triggered from Portfolio\n\nStarting immediate analysis for **${symbol}** (${shares} shares owned, average cost **₹${buyPrice}**)...`
+          },
+          { role: "user", content: userQuery }
+        ]);
+
+        askChatbot(userQuery, symbol, shares, buyPrice)
+          .then(res => {
+            setMessages(prev => [...prev, { role: "assistant", content: res.response }]);
+          })
+          .catch(err => {
+            console.error(err);
+            setMessages(prev => [
+              ...prev,
+              {
+                role: "assistant",
+                content: "⚠️ **System Error**: Failed to establish connection with the AI Advisor backend."
+              }
+            ]);
+          })
+          .finally(() => {
+            setLoading(false);
+            if (onClearPrefill) onClearPrefill();
+          });
+      } else if (prefill.type === "portfolio" && prefill.holdings) {
+        const { holdings } = prefill;
+        if (holdings.length === 0) {
+          setLoading(false);
+          if (onClearPrefill) onClearPrefill();
+          return;
+        }
+
+        const holdingsSummary = holdings.map(h => 
+          `• **${h.symbol}**: ${h.shares} shares @ ₹${h.buyPrice.toLocaleString("en-IN")}`
+        ).join("\n");
+
+        const userQuery = `Analyze my entire stock portfolio consisting of the following active positions:\n${holdings.map(h => `- ${h.symbol}: ${h.shares} shares bought at avg cost ₹${h.buyPrice}`).join("\n")}\n\nProvide an asset allocation health check, risk assessment, and individual exit/stay recommendations for each stock. Suggest optimal loss recovery reinvestments where appropriate.`;
+
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `### 🤖 Portfolio-Wide AI Analysis Triggered\n\nCompiling comprehensive report for your active holdings:\n\n${holdingsSummary}\n\nRunning cross-asset valuations & scanning recovery recommendations...`
+          },
+          { role: "user", content: userQuery }
+        ]);
+
+        askChatbot(userQuery)
+          .then(res => {
+            setMessages(prev => [...prev, { role: "assistant", content: res.response }]);
+          })
+          .catch(err => {
+            console.error(err);
+            setMessages(prev => [
+              ...prev,
+              {
+                role: "assistant",
+                content: "⚠️ **System Error**: Failed to establish connection with the AI Advisor backend."
+              }
+            ]);
+          })
+          .finally(() => {
+            setLoading(false);
+            if (onClearPrefill) onClearPrefill();
+          });
+      } else {
+        setLoading(false);
+        if (onClearPrefill) onClearPrefill();
+      }
+    }
+  }, [prefill, onClearPrefill]);
+
+  const handleSendMessage = async (textToSend: string) => {
+    if (!textToSend.trim()) return;
     
     setLoading(true);
-    const userMsg = textToSend.trim() || `Should I stay invested in ${wizardSymbol.toUpperCase()}? (Owned: ${wizardShares} shares bought at ₹${wizardBuyPrice})`;
+    const userMsg = textToSend.trim();
     
     setMessages(prev => [...prev, { role: "user", content: userMsg }]);
     setInput("");
 
     try {
-      const res = await askChatbot(
-        userMsg,
-        isWizard ? wizardSymbol.toUpperCase() : undefined,
-        isWizard ? wizardShares : undefined,
-        isWizard ? wizardBuyPrice : undefined
-      );
-
+      const res = await askChatbot(userMsg);
       setMessages(prev => [...prev, { role: "assistant", content: res.response }]);
     } catch (err: any) {
       console.error(err);
@@ -66,11 +153,133 @@ I can help you analyze your stock holdings, calculate your current profits or lo
       ]);
     } finally {
       setLoading(false);
-      if (isWizard) {
-        setShowWizard(false);
-        setWizardSymbol("");
-        setWizardShares(0);
-        setWizardBuyPrice(0);
+    }
+  };
+
+  const handleQuestionnaireInput = async (val: string) => {
+    const cleanInput = val.trim();
+    if (!cleanInput) return;
+
+    // Check for exit command
+    if (cleanInput.toLowerCase() === "cancel") {
+      setQuestionStep("idle");
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: val },
+        {
+          role: "assistant",
+          content: "🚫 **Onboarding Cancelled**. Holding analysis wizard aborted. You can ask me any regular stock questions now!"
+        }
+      ]);
+      setInput("");
+      return;
+    }
+
+    if (questionStep === "ask_symbol") {
+      const symbol = cleanInput.toUpperCase();
+      // Basic stock symbol validation (alphanumeric, dot, dash, e.g. KAYNES.NS)
+      if (!/^[A-Z0-9.\-_]{2,20}$/.test(symbol)) {
+        setMessages(prev => [
+          ...prev,
+          { role: "user", content: val },
+          {
+            role: "assistant",
+            content: "⚠️ **Invalid Stock Symbol**. Symbol should contain only alphanumeric characters, dots, or hyphens (e.g. INFY, TCS, KAYNES.NS). Please enter again, or type **'cancel'** to exit:"
+          }
+        ]);
+        setInput("");
+        return;
+      }
+
+      setTempSymbol(symbol);
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: val },
+        {
+          role: "assistant",
+          content: `Stock Symbol set to **${symbol}**.\n\nNext, **how many shares of ${symbol} did you buy?** (Enter a number greater than 0):`
+        }
+      ]);
+      setQuestionStep("ask_shares");
+      setInput("");
+      
+    } else if (questionStep === "ask_shares") {
+      const shares = parseFloat(cleanInput);
+      if (isNaN(shares) || shares <= 0) {
+        setMessages(prev => [
+          ...prev,
+          { role: "user", content: val },
+          {
+            role: "assistant",
+            content: "⚠️ **Invalid Quantity**. Shares owned must be a positive number greater than 0. Please enter a valid number, or type **'cancel'** to exit:"
+          }
+        ]);
+        setInput("");
+        return;
+      }
+
+      setTempShares(shares);
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: val },
+        {
+          role: "assistant",
+          content: `Shares quantity set to **${shares}**.\n\nFinally, **what was your average Buy Price (₹) for ${tempSymbol}?** (Enter a number greater than 0):`
+        }
+      ]);
+      setQuestionStep("ask_price");
+      setInput("");
+
+    } else if (questionStep === "ask_price") {
+      const price = parseFloat(cleanInput);
+      if (isNaN(price) || price <= 0) {
+        setMessages(prev => [
+          ...prev,
+          { role: "user", content: val },
+          {
+            role: "assistant",
+            content: "⚠️ **Invalid Buy Price**. Average price must be a positive number greater than 0. Please enter a valid price in ₹, or type **'cancel'** to exit:"
+          }
+        ]);
+        setInput("");
+        return;
+      }
+
+      setTempBuyPrice(price);
+      setQuestionStep("idle");
+      setInput("");
+
+      // Start standard AI request flow
+      setLoading(true);
+      const targetSymbol = tempSymbol;
+      const targetShares = tempShares;
+      const targetPrice = price;
+
+      const userQuery = `Should I stay invested in ${targetSymbol}? (Owned: ${targetShares} shares bought at ₹${targetPrice})`;
+      
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: `Buy Price: ₹${targetPrice}` },
+        { role: "user", content: userQuery }
+      ]);
+
+      try {
+        const res = await askChatbot(userQuery, targetSymbol, targetShares, targetPrice);
+        setMessages(prev => [...prev, { role: "assistant", content: res.response }]);
+      } catch (err: any) {
+        console.error(err);
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "⚠️ **System Error**: Failed to establish connection with the AI Advisor backend. Please verify your internet connection and try again."
+          }
+        ]);
+      } finally {
+        setLoading(false);
+        setTempSymbol("");
+        setTempShares(0);
+        setTempBuyPrice(0);
       }
     }
   };
@@ -79,7 +288,17 @@ I can help you analyze your stock holdings, calculate your current profits or lo
     if (type === "recovery") {
       handleSendMessage("Show me high-probability loss recovery stock picks with target prices and stop-losses across 7 days, 30 days, and 6 months.");
     } else {
-      setShowWizard(true);
+      setQuestionStep("ask_symbol");
+      setTempSymbol("");
+      setTempShares(0);
+      setTempBuyPrice(0);
+      setMessages(prev => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "### 📈 Stock Holding Analysis\n\nLet's analyze your holding step-by-step to calculate profits/losses and plan a recovery strategy. This operates locally and **uses zero AI tokens** during setup!\n\nFirst, **what is the Stock Symbol**? (e.g. INFY, TCS, KAYNES.NS):"
+        }
+      ]);
     }
   };
 
@@ -198,71 +417,15 @@ I can help you analyze your stock holdings, calculate your current profits or lo
           </div>
         </div>
 
-        {/* Dynamic Wizard Form */}
-        {showWizard && (
-          <div className="rounded-3xl border border-purple-500/25 bg-slate-950 p-6 shadow-[0_4px_25px_rgba(168,85,247,0.15)] animate-fadeIn">
-            <h4 className="text-xs font-extrabold uppercase tracking-wider text-purple-400 mb-4 flex items-center gap-1.5">
-              <span>📊 holding wizard setup</span>
-            </h4>
-            
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stock Symbol (NSE)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. INFY, TCS, RELIANCE"
-                  required
-                  value={wizardSymbol}
-                  onChange={(e) => setWizardSymbol(e.target.value)}
-                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all uppercase"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Shares Owned</label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="any"
-                    placeholder="Qty"
-                    required
-                    value={wizardShares || ""}
-                    onChange={(e) => setWizardShares(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Buy Price (₹)</label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="any"
-                    placeholder="Avg Cost"
-                    required
-                    value={wizardBuyPrice || ""}
-                    onChange={(e) => setWizardBuyPrice(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={() => setShowWizard(false)}
-                  className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-slate-400 font-bold rounded-xl text-xs transition-all cursor-pointer border border-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleSendMessage("", true)}
-                  disabled={!wizardSymbol.trim() || wizardShares <= 0 || wizardBuyPrice <= 0}
-                  className="flex-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs transition-all cursor-pointer border border-purple-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Submit & Query
-                </button>
-              </div>
-            </div>
+        {/* Onboarding Questionnaire Active Indicator */}
+        {questionStep !== "idle" && (
+          <div className="rounded-3xl border border-purple-500/25 bg-purple-950/10 p-5 shadow-[0_4px_20px_rgba(168,85,247,0.08)] animate-pulse flex flex-col gap-2">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-400 flex items-center gap-1.5 select-none">
+              ⚡ Questionnaire Mode Active
+            </span>
+            <p className="text-[11px] text-slate-400 leading-normal">
+              Type your answers directly in the chat input below. You can abort at any time by typing <strong className="text-purple-300 font-bold">cancel</strong>.
+            </p>
           </div>
         )}
 
@@ -350,13 +513,25 @@ I can help you analyze your stock holdings, calculate your current profits or lo
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleSendMessage(input);
+              if (questionStep !== "idle") {
+                handleQuestionnaireInput(input);
+              } else {
+                handleSendMessage(input);
+              }
             }}
             className="flex items-center gap-2 bg-slate-900/50 border border-slate-900 rounded-2xl px-3 py-1.5 focus-within:ring-1 focus-within:ring-purple-500/30"
           >
             <input
               type="text"
-              placeholder="Ask: 'Is TCS a buy?' or type stock investment queries..."
+              placeholder={
+                questionStep === "ask_symbol"
+                  ? "Step 1/3: Enter Stock Symbol (e.g. KAYNES.NS) or type 'cancel'..."
+                  : questionStep === "ask_shares"
+                  ? `Step 2/3: Enter total shares bought for ${tempSymbol} or type 'cancel'...`
+                  : questionStep === "ask_price"
+                  ? `Step 3/3: Enter Buy Price (₹) for ${tempSymbol} or type 'cancel'...`
+                  : "Ask: 'Is TCS a buy?' or type stock investment queries..."
+              }
               disabled={loading}
               value={input}
               onChange={(e) => setInput(e.target.value)}

@@ -16,9 +16,18 @@ import { createClient } from "@/lib/supabase/client";
 interface UserWorkspaceProps {
   userId?: string;
   userEmail?: string;
+  onAnalyzeHolding?: (symbol: string, shares: number, buyPrice: number) => void;
+  onAnalyzeEntirePortfolio?: (holdings: { symbol: string; shares: number; buyPrice: number }[]) => void;
+  canUseChatbot?: boolean;
 }
 
-export default function UserWorkspace({ userId: propUserId, userEmail: propUserEmail }: UserWorkspaceProps = {}) {
+export default function UserWorkspace({
+  userId: propUserId,
+  userEmail: propUserEmail,
+  onAnalyzeHolding,
+  onAnalyzeEntirePortfolio,
+  canUseChatbot = false,
+}: UserWorkspaceProps = {}) {
   const [userId, setUserId] = useState<string>("default-trader-admin");
   const [watchlist, setWatchlist] = useState<UserWatchlistItem[]>([]);
   const [portfolio, setPortfolio] = useState<UserPortfolioResponse | null>(null);
@@ -132,6 +141,18 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
       await loadData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleAnalyzeEntirePortfolio = () => {
+    if (!portfolio?.holdings || portfolio.holdings.length === 0) return;
+    const items = portfolio.holdings.map(h => ({
+      symbol: h.symbol,
+      shares: h.shares_quantity,
+      buyPrice: h.buy_price
+    }));
+    if (onAnalyzeEntirePortfolio) {
+      onAnalyzeEntirePortfolio(items);
     }
   };
 
@@ -275,7 +296,7 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
       <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/60 backdrop-blur-xl p-6 shadow-2xl flex flex-col justify-between">
         <div>
           {/* Header */}
-          <div className="flex justify-between items-start border-b border-slate-900/60 pb-4 mb-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-900/60 pb-4 mb-6 gap-4">
             <div>
               <h3 className="text-md font-extrabold text-slate-100 tracking-wide flex items-center gap-2">
                 💼 Share Holdings Portfolio {propUserEmail && <span className="text-slate-400 font-normal">({propUserEmail})</span>}
@@ -284,9 +305,28 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
                 Real-time transaction tracking and evaluation of active share holdings in Indian Rupees.
               </p>
             </div>
-            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              Live Holdings
-            </span>
+            <div className="flex items-center gap-2.5 self-stretch sm:self-auto justify-end">
+              {portfolio?.holdings && portfolio.holdings.length > 0 && (
+                canUseChatbot ? (
+                  <button
+                    onClick={handleAnalyzeEntirePortfolio}
+                    className="h-8 px-3 rounded bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[10px] font-black uppercase tracking-wider border border-purple-500/20 hover:border-purple-500/40 hover:shadow-[0_0_15px_rgba(168,85,247,0.25)] transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                  >
+                    🤖 AI Analyze Portfolio
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => alert("🔒 Chatbot Advisor is currently locked on your profile. Please ask an admin to enable the Chatbot permission in the Admin Control Center.")}
+                    className="h-8 px-3 rounded bg-slate-900 border border-slate-800 text-slate-500 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                  >
+                    🔒 AI Analyze Portfolio
+                  </button>
+                )
+              )}
+              <span className="px-2 py-1.5 rounded text-[10px] font-extrabold tracking-wider uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                Live Holdings
+              </span>
+            </div>
           </div>
 
           {/* Stats grid */}
@@ -363,12 +403,29 @@ export default function UserWorkspace({ userId: propUserId, userEmail: propUserE
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
-                        <button
-                          onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
-                          className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer"
-                        >
-                          Sell All
-                        </button>
+                        <div className="flex gap-2">
+                          {canUseChatbot ? (
+                            <button
+                              onClick={() => onAnalyzeHolding && onAnalyzeHolding(hold.symbol, hold.shares_quantity, hold.buy_price)}
+                              className="text-purple-400 hover:text-purple-300 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 hover:border-purple-500/45 hover:shadow-[0_0_10px_rgba(168,85,247,0.15)] transition-all cursor-pointer shrink-0"
+                            >
+                              🤖 AI Analyze
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => alert("🔒 Chatbot Advisor is currently locked on your profile. Please ask an admin to enable the Chatbot permission in the Admin Control Center.")}
+                              className="text-slate-500 hover:text-slate-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-900 border border-slate-800 transition-all cursor-pointer shrink-0"
+                            >
+                              🔒 AI Analyze
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
+                            className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer shrink-0"
+                          >
+                            Sell All
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))

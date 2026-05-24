@@ -173,6 +173,33 @@ def chatbot_ask_endpoint(req: ChatbotRequest):
         buy_price = req.buy_price
         message = req.message
 
+        # Ticker & Metric Auto-Extraction: Parse symbol, shares, and cost directly from text queries if omitted
+        import re
+        if not symbol and message:
+            # 1. Match suffix format: e.g. KAYNES.NS, TCS.BO, Dixon.ns
+            match = re.search(r'\b([A-Za-z0-9_-]+\.(NS|BO))\b', message)
+            if match:
+                symbol = match.group(1).upper()
+            else:
+                # 2. Match generic raw uppercase symbols: e.g. "KAYNES", "TCS", "RELIANCE"
+                words = re.findall(r'\b([A-Z]{3,10})\b', message)
+                for w in words:
+                    if w not in ["NSE", "BSE", "INR", "USD", "BUY", "SELL", "HOLD"]:
+                        symbol = f"{w}.NS"
+                        break
+
+        if not buy_price and message:
+            # Match formats like: bought at 3000, at ₹3000, price of 3000, @ 3000, etc.
+            price_match = re.search(r'(?:bought\s+at|at|price|₹|@)\s*(\d+(?:\.\d+)?)', message, re.IGNORECASE)
+            if price_match:
+                buy_price = float(price_match.group(1))
+
+        if not shares and message:
+            # Match formats like: 10 shares, 50 qty, 5 shares, 20 units
+            qty_match = re.search(r'(\d+)\s*(?:shares|qty|units|sh|holding)', message, re.IGNORECASE)
+            if qty_match:
+                shares = float(qty_match.group(1))
+
         # Fetch recovery picks
         short_term_picks = []
         medium_term_picks = []

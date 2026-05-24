@@ -48,6 +48,11 @@ export function Dashboard() {
     can_use_chatbot: false,
   });
   const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" >("scans");
+  const [chatbotPrefill, setChatbotPrefill] = useState<{
+    type: "single" | "portfolio";
+    holding?: { symbol: string; shares: number; buyPrice: number };
+    holdings?: { symbol: string; shares: number; buyPrice: number }[];
+  } | null>(null);
 
   // Impersonation state
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
@@ -147,6 +152,22 @@ export function Dashboard() {
     if (sessionUser) {
       window.location.reload();
     }
+  };
+
+  const handleAnalyzeHoldingFromPortfolio = (symbol: string, shares: number, buyPrice: number) => {
+    setChatbotPrefill({
+      type: "single",
+      holding: { symbol, shares, buyPrice }
+    });
+    setActiveTab("chatbot");
+  };
+
+  const handleAnalyzeEntirePortfolioFromPortfolio = (holdings: { symbol: string; shares: number; buyPrice: number }[]) => {
+    setChatbotPrefill({
+      type: "portfolio",
+      holdings
+    });
+    setActiveTab("chatbot");
   };
 
   const load = useCallback(async () => {
@@ -441,22 +462,28 @@ export function Dashboard() {
         <>
           {permissions.can_use_chatbot !== true ? (
             <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 AI Advisor Chatbot is locked by the administrator.
+               🔒 AI Advisor Chatbot is locked by the administrator.
             </div>
           ) : (
-            <ChatbotAdvisor />
+            <ChatbotAdvisor
+              prefill={chatbotPrefill}
+              onClearPrefill={() => setChatbotPrefill(null)}
+            />
           )}
         </>
       ) : (
         <>
           {permissions.can_use_portfolio === false ? (
             <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 Portfolio & Watchlists Labs are locked by the administrator.
+               🔒 Portfolio & Watchlists Labs are locked by the administrator.
             </div>
           ) : (
             <UserWorkspace
               userId={impersonatedId || sessionUser?.id || undefined}
               userEmail={impersonatedEmail || sessionUser?.email || undefined}
+              onAnalyzeHolding={handleAnalyzeHoldingFromPortfolio}
+              onAnalyzeEntirePortfolio={handleAnalyzeEntirePortfolioFromPortfolio}
+              canUseChatbot={permissions.can_use_chatbot === true}
             />
           )}
         </>

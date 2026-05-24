@@ -81,7 +81,7 @@ def _chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3) -> str |
 
 def generate_advisor_response(prompt: str) -> str | None:
     """Public wrapper to chat via Hugging Face AI router."""
-    return _chat(prompt, max_tokens=650, temperature=0.4)
+    return _chat(prompt, max_tokens=1500, temperature=0.4)
 
 
 def analyze_news_sentiment(text: str) -> tuple[str, float]:
