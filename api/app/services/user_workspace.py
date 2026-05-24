@@ -296,7 +296,7 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
 
             # Check if holding already exists
             existing = client.table("user_portfolios").select("*").eq("user_id", user_id).eq("symbol", norm_sym).maybe_single().execute()
-            if existing.data:
+            if existing and existing.data:
                 old_qty = float(existing.data["shares_quantity"])
                 old_price = float(existing.data["buy_price"])
                 new_qty = old_qty + quantity
@@ -353,7 +353,7 @@ def sell_from_portfolio(user_id: str, symbol: str, quantity: float) -> bool:
     if use_supabase:
         try:
             existing = client.table("user_portfolios").select("*").eq("user_id", user_id).eq("symbol", norm_sym).maybe_single().execute()
-            if existing.data:
+            if existing and existing.data:
                 old_qty = float(existing.data["shares_quantity"])
                 if quantity >= old_qty:
                     client.table("user_portfolios").delete().eq("id", existing.data["id"]).execute()

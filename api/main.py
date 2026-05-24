@@ -590,10 +590,10 @@ def stock_detail(symbol: str):
         .execute()
     )
     return {
-        "stock": stock.data,
-        "metrics": metrics.data,
-        "news": news.data,
-        "latest_recommendation": rec.data[0] if rec.data else None,
+        "stock": stock.data if stock else None,
+        "metrics": metrics.data if metrics else [],
+        "news": news.data if news else [],
+        "latest_recommendation": rec.data[0] if (rec and rec.data) else None,
     }
 
 

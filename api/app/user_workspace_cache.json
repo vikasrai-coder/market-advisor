@@ -22,6 +22,11 @@
         "symbol": "KAYNES.NS",
         "shares_quantity": 27.0,
         "buy_price": 4272.0
+      },
+      {
+        "symbol": "TATAMOTORS.NS",
+        "shares_quantity": 10.0,
+        "buy_price": 800.0
       }
     ]
   }

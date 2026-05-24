@@ -60,7 +60,7 @@ def get_user_role_profile(user_id: str, email: str | None = None) -> Dict[str, A
     if client:
         try:
             res = client.table("user_roles").select("*").eq("user_id", user_id).maybe_single().execute()
-            if res.data:
+            if res and res.data:
                 profile = res.data
                 # Auto-upgrade designated email to admin if needed
                 if is_admin and profile["role"] != "admin":
@@ -268,7 +268,7 @@ def close_admin_trade(trade_id: str, sell_price: float) -> bool:
     if client:
         try:
             existing = client.table("admin_trades").select("*").eq("id", trade_id).maybe_single().execute()
-            if existing.data:
+            if existing and existing.data:
                 qty = float(existing.data["shares_quantity"])
                 buy_price = float(existing.data["buy_price"])
                 pnl = round((sell_price - buy_price) * qty, 2)
