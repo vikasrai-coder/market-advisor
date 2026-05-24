@@ -1,5 +1,17 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { runBacktest, BacktestResponse, TradeMode } from "../lib/api";
+import { createClient } from "../lib/supabase/client";
+
+interface SavedRun {
+  id: string;
+  timestamp: string;
+  mode: TradeMode;
+  startDate: string;
+  duration: number;
+  winRate: number;
+  metrics: any;
+  response?: BacktestResponse;
+}
 
 interface BacktestSimulatorProps {
   currentMode: TradeMode;
@@ -18,17 +30,258 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
 
+  const [history, setHistory] = useState<SavedRun[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  // Load history from Supabase on mount
+  useEffect(() => {
+    async function fetchHistory() {
+      try {
+        const supabase = createClient();
+        const { data: runs, error: runsError } = await supabase
+          .from("backtest_runs")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (runsError) throw runsError;
+
+        if (runs) {
+          const formattedHistory: SavedRun[] = runs.map(run => ({
+            id: run.id,
+            timestamp: new Date(run.created_at).toLocaleString("en-IN"),
+            mode: run.mode as TradeMode,
+            startDate: run.start_date,
+            duration: run.check_days,
+            winRate: parseFloat(run.win_rate),
+            metrics: {
+              win_rate: parseFloat(run.win_rate),
+              avg_return: parseFloat(run.avg_return),
+              total_picks: run.total_picks,
+              target_hits: run.target_hits,
+              stop_hits: run.stop_hits,
+              held: run.held,
+              index_return: parseFloat(run.index_return),
+              outperformance: parseFloat(run.outperformance)
+            }
+          }));
+
+          setHistory(formattedHistory);
+
+          // Auto-load details for the most recent run
+          if (formattedHistory.length > 0) {
+            handleSelectRun(formattedHistory[0]);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load backtest history from Supabase:", err);
+      }
+    }
+    fetchHistory();
+  }, []);
+
+  async function handleSelectRun(run: SavedRun) {
+    setActiveRunId(run.id);
+    setStartDate(run.startDate);
+    setDuration(run.duration);
+
+    if (run.response) {
+      setResponse(run.response);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const supabase = createClient();
+      const { data: results, error: resultsError } = await supabase
+        .from("backtest_results")
+        .select("*")
+        .eq("run_id", run.id)
+        .order("rank", { ascending: true });
+
+      if (resultsError) throw resultsError;
+
+      const fullResponse: BacktestResponse = {
+        mode: run.mode,
+        start_date: run.startDate,
+        check_days: run.duration,
+        metrics: run.metrics,
+        results: (results || []).map(r => ({
+          rank: r.rank,
+          symbol: r.symbol,
+          display_symbol: r.symbol.replace(".NS", ""),
+          name: r.name,
+          sector: r.sector,
+          is_undervalued: r.is_undervalued,
+          composite_score: parseFloat(r.composite_score),
+          rsi: r.rsi ? parseFloat(r.rsi) : null,
+          macd: r.macd ? parseFloat(r.macd) : null,
+          entry_price: parseFloat(r.entry_price),
+          target_price: parseFloat(r.target_price),
+          stop_loss: parseFloat(r.stop_loss),
+          exit_price: parseFloat(r.exit_price),
+          exit_date: r.exit_date,
+          return_pct: parseFloat(r.return_pct),
+          outcome: r.outcome as any
+        })),
+        errors: []
+      };
+
+      setHistory(prev => prev.map(item => item.id === run.id ? { ...item, response: fullResponse } : item));
+      setResponse(fullResponse);
+    } catch (err: any) {
+      console.error("Failed to load details from Supabase:", err);
+      setError("Failed to load details for the selected run.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const handleSimulate = async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await runBacktest(currentMode, startDate, duration);
       setResponse(res);
+
+      const supabase = createClient();
+
+      // Check if a run with the exact same parameters already exists.
+      // If yes, delete it first to save and replace/overwrite.
+      const { data: existingRuns } = await supabase
+        .from("backtest_runs")
+        .select("id")
+        .eq("mode", currentMode)
+        .eq("start_date", startDate)
+        .eq("check_days", duration);
+
+      if (existingRuns && existingRuns.length > 0) {
+        const idsToDelete = existingRuns.map(r => r.id);
+        await supabase
+          .from("backtest_runs")
+          .delete()
+          .in("id", idsToDelete);
+
+        // Remove from local history state
+        setHistory(prev => prev.filter(item => !idsToDelete.includes(item.id)));
+      }
+
+      // 1. Insert the main run record
+      const { data: runData, error: runError } = await supabase
+        .from("backtest_runs")
+        .insert({
+          mode: currentMode,
+          start_date: startDate,
+          check_days: duration,
+          win_rate: res.metrics.win_rate,
+          avg_return: res.metrics.avg_return,
+          total_picks: res.metrics.total_picks,
+          target_hits: res.metrics.target_hits,
+          stop_hits: res.metrics.stop_hits,
+          held: res.metrics.held,
+          index_return: res.metrics.index_return,
+          outperformance: res.metrics.outperformance
+        })
+        .select()
+        .single();
+
+      if (runError) throw runError;
+
+      // 2. Insert the sub-records of simulated stock trades
+      if (runData && res.results.length > 0) {
+        const resultsToInsert = res.results.map(stock => ({
+          run_id: runData.id,
+          rank: stock.rank,
+          symbol: stock.symbol,
+          name: stock.name,
+          sector: stock.sector,
+          is_undervalued: stock.is_undervalued,
+          composite_score: stock.composite_score,
+          rsi: stock.rsi || 50,
+          macd: stock.macd || 0,
+          entry_price: stock.entry_price,
+          target_price: stock.target_price,
+          stop_loss: stock.stop_loss,
+          exit_price: stock.exit_price,
+          exit_date: stock.exit_date,
+          return_pct: stock.return_pct,
+          outcome: stock.outcome
+        }));
+
+        const { error: resultsError } = await supabase
+          .from("backtest_results")
+          .insert(resultsToInsert);
+
+        if (resultsError) throw resultsError;
+
+        // Append this run to local active state
+        const newRun: SavedRun = {
+          id: runData.id,
+          timestamp: new Date(runData.created_at).toLocaleString("en-IN"),
+          mode: currentMode,
+          startDate,
+          duration,
+          winRate: res.metrics.win_rate,
+          metrics: res.metrics,
+          response: res
+        };
+
+        setHistory(prev => [newRun, ...prev]);
+        setActiveRunId(runData.id);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Simulation failed. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteRun = async (e: React.MouseEvent, runId: string) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this simulation run from database?")) return;
+    try {
+      const supabase = createClient();
+      const { error: deleteError } = await supabase
+        .from("backtest_runs")
+        .delete()
+        .eq("id", runId);
+
+      if (deleteError) throw deleteError;
+
+      const nextHistory = history.filter(r => r.id !== runId);
+      setHistory(nextHistory);
+      if (activeRunId === runId) {
+        if (nextHistory.length > 0) {
+          handleSelectRun(nextHistory[0]);
+        } else {
+          setActiveRunId(null);
+          setResponse(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete run from Supabase:", err);
+      alert("Failed to delete simulation run.");
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm("Are you sure you want to clear all simulation history from database?")) return;
+    try {
+      const supabase = createClient();
+      const { error: clearError } = await supabase
+        .from("backtest_runs")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+
+      if (clearError) throw clearError;
+
+      setHistory([]);
+      setActiveRunId(null);
+      setResponse(null);
+    } catch (err) {
+      console.error("Failed to clear history from Supabase:", err);
+      alert("Failed to clear simulation history.");
     }
   };
 
@@ -56,7 +309,7 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
   return (
     <div className="w-full mb-8 rounded-3xl border border-slate-800 bg-slate-950/60 backdrop-blur-xl shadow-2xl overflow-hidden transition-all duration-300">
       {/* Header */}
-      <div 
+      <div
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex items-center justify-between p-6 cursor-pointer border-b border-slate-900/60 hover:bg-slate-900/20 transition-all duration-200"
       >
@@ -69,7 +322,7 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-100 tracking-wide flex items-center gap-2">
-              📊 Quantitative Backtest Simulator 
+              📊 Quantitative Backtest Simulator
               <span className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
                 Labs
               </span>
@@ -157,6 +410,62 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
             </button>
           </div>
 
+          {/* History Panel */}
+          {history.length > 0 && (
+            <div className="mb-6 p-4 rounded-2xl border border-slate-900 bg-slate-900/10">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  📚 Saved Simulations History ({history.length})
+                </span>
+                <button
+                  onClick={handleClearAll}
+                  className="text-[10px] text-rose-400 hover:text-rose-300 font-bold uppercase tracking-wider transition-colors"
+                >
+                  Clear All
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[160px] overflow-y-auto pr-1">
+                {history.map((run) => {
+                  const isActive = activeRunId === run.id;
+                  const runWinRate = run.winRate;
+                  return (
+                    <div
+                      key={run.id}
+                      onClick={() => handleSelectRun(run)}
+                      className={`relative flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all duration-200 group ${isActive
+                          ? "bg-purple-500/10 border-purple-500/40 text-slate-100 shadow-[0_0_12px_rgba(168,85,247,0.1)]"
+                          : "bg-slate-900/40 border-slate-900/60 hover:bg-slate-900/80 hover:border-slate-800 text-slate-300"
+                        }`}
+                    >
+                      <div className="flex flex-col gap-0.5 select-none text-left">
+                        <span className="text-xs font-bold tracking-wide flex items-center gap-1.5">
+                          {run.startDate} ({run.duration}d)
+                          <span className={`text-[10px] font-black ${runWinRate >= 70 ? "text-emerald-400" : runWinRate >= 50 ? "text-amber-400" : "text-rose-400"
+                            }`}>
+                            {runWinRate}%
+                          </span>
+                        </span>
+                        <span className="text-[9px] text-slate-500">
+                          {run.timestamp} • {run.mode}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={(e) => handleDeleteRun(e, run.id)}
+                        className="p-1 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-150"
+                        title="Delete run"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Error Message */}
           {error && (
             <div className="mb-6 p-4 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-400 text-sm flex items-center gap-3 animate-pulse">
@@ -172,7 +481,7 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
             <div className="space-y-8 animate-fadeIn">
               {/* Scoreboard metric grid */}
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                
+
                 {/* 1. Win Rate Radial Ring */}
                 <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden group">
                   <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent pointer-events-none" />
@@ -299,11 +608,10 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
                       Simulated outperformance compared against Nifty 50 Index return of {response.metrics.index_return}% over the same period.
                     </p>
                   </div>
-                  <div className={`w-full rounded-lg p-2.5 flex items-center justify-center text-xs font-bold border ${
-                    response.metrics.outperformance >= 0 
+                  <div className={`w-full rounded-lg p-2.5 flex items-center justify-center text-xs font-bold border ${response.metrics.outperformance >= 0
                       ? "bg-amber-500/10 border-amber-500/25 text-amber-400"
                       : "bg-rose-500/10 border-rose-500/25 text-rose-400"
-                  }`}>
+                    }`}>
                     {response.metrics.outperformance >= 0 ? "🔥 Outperforming Benchmark" : "⚠️ Lagging Benchmark"}
                   </div>
                 </div>
