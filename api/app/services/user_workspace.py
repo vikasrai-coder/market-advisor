@@ -90,17 +90,9 @@ def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
 
     if use_supabase:
         try:
-            res = client.table("user_watchlists").select("symbol, exchange").eq("user_id", user_id).execute()
-            # Reconstruct full symbols: KAYNES + NSE → KAYNES.NS
+            res = client.table("user_watchlists").select("symbol").eq("user_id", user_id).execute()
             for row in res.data:
-                bare = row["symbol"]
-                exch = (row.get("exchange") or "NSE").upper()
-                if exch == "NSE":
-                    raw_symbols.append(f"{bare}.NS")
-                elif exch == "BSE":
-                    raw_symbols.append(f"{bare}.BO")
-                else:
-                    raw_symbols.append(bare)
+                raw_symbols.append(row["symbol"])
         except Exception as exc:
             logger.error(f"Failed to fetch user watchlist from Supabase: {exc}")
             cache = _read_local_cache()
@@ -144,7 +136,6 @@ def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
 
 def add_to_watchlist(user_id: str, symbol: str) -> bool:
     norm_sym = normalize_symbol(symbol)
-    bare_sym, exchange = _split_symbol(norm_sym)
     client = get_client()
 
     # Enrich stocks table with live yfinance data
@@ -156,15 +147,15 @@ def add_to_watchlist(user_id: str, symbol: str) -> bool:
         try:
             # Upsert stock info (schema-valid columns only)
             client.table("stocks").upsert(stock_profile).execute()
-            # user_watchlists stores bare symbol + exchange separately
+            # user_watchlists stores normalized symbol
             client.table("user_watchlists").upsert({
                 "user_id": user_id,
-                "symbol": bare_sym,
-                "exchange": exchange,
+                "symbol": norm_sym,
             }).execute()
             return True
         except Exception as exc:
             logger.error(f"Failed to add to user watchlist on Supabase: {exc}")
+            raise exc
 
     # Local cache fallback (always save full .NS symbol)
     cache = _read_local_cache()
@@ -178,25 +169,23 @@ def add_to_watchlist(user_id: str, symbol: str) -> bool:
 
 def remove_from_watchlist(user_id: str, symbol: str) -> bool:
     norm_sym = normalize_symbol(symbol)
-    bare_sym, exchange = _split_symbol(norm_sym)
     client = get_client()
 
     use_supabase = client and _is_valid_uuid(user_id)
 
     if use_supabase:
         try:
-            # Try both bare symbol and full symbol
-            client.table("user_watchlists").delete().eq("user_id", user_id).eq("symbol", bare_sym).execute()
+            client.table("user_watchlists").delete().eq("user_id", user_id).eq("symbol", norm_sym).execute()
             return True
         except Exception as exc:
             logger.error(f"Failed to remove from user watchlist on Supabase: {exc}")
+            raise exc
 
     # Local cache fallback
     cache = _read_local_cache()
     if user_id in cache["user_watchlists"]:
         wl = cache["user_watchlists"][user_id]
-        # Match by full sym or bare sym
-        to_remove = [s for s in wl if s == norm_sym or s == bare_sym]
+        to_remove = [s for s in wl if s == norm_sym]
         for s in to_remove:
             wl.remove(s)
         _write_local_cache(cache)

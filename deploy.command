@@ -73,16 +73,11 @@ git push origin "$BRANCH"
 ok "Pushed to GitHub"
 
 # ── Deploy directly to Vercel ──────────────────────────────
-if ! command -v vercel >/dev/null 2>&1; then
-    warn "vercel CLI is not installed."
-    warn "To trigger direct CLI deployments, install it with: npm install -g vercel"
-else
-    info "Triggering production deployment on Vercel CLI..."
-    cd web
-    vercel --prod --yes
-    cd ..
-    ok "Direct Vercel deployment completed successfully!"
+info "Triggering full production deployment (API + Web) using deploy-vercel.sh..."
+if ! bash scripts/deploy-vercel.sh; then
+    fail "Vercel deployment failed!"
 fi
+ok "Direct Vercel deployment completed successfully!"
 
 # ── Summary ────────────────────────────────────────────────
 echo ""

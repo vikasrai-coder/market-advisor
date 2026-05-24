@@ -3,7 +3,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERCEL="${VERCEL_CMD:-bunx vercel@54.2.0}"
+
+# Dynamic Vercel CLI resolution: check global vercel -> bunx -> npx
+if [ -z "${VERCEL_CMD:-}" ]; then
+  if command -v vercel >/dev/null 2>&1; then
+    VERCEL="vercel"
+  elif command -v bunx >/dev/null 2>&1; then
+    VERCEL="bunx vercel@54.2.0"
+  else
+    VERCEL="npx -y vercel@54.2.0"
+  fi
+else
+  VERCEL="$VERCEL_CMD"
+fi
 
 add_env() {
   local dir="$1" key="$2" val="$3"
