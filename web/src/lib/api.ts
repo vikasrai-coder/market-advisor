@@ -302,6 +302,7 @@ export type UserRoleProfile = {
     can_view_signals: boolean;
     can_backtest: boolean;
     can_use_portfolio: boolean;
+    can_use_chatbot?: boolean;
   };
   offline_password?: string;
   created_at?: string;
@@ -362,5 +363,12 @@ export async function adminSellTrade(tradeId: string, sellPrice: number) {
 export async function sendTelegramTest() {
   return fetchJson<{ success: boolean; message: string }>("/api/telegram/test", {
     method: "POST",
+  });
+}
+
+export async function askChatbot(message: string, symbol?: string, shares?: number, buyPrice?: number) {
+  return fetchJson<{ response: string }>("/api/chatbot/ask", {
+    method: "POST",
+    body: JSON.stringify({ message, symbol: symbol || null, shares: shares || null, buy_price: buyPrice || null }),
   });
 }

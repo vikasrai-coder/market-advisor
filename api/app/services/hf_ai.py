@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 import re
 from typing import Any
 
@@ -7,57 +9,108 @@ from huggingface_hub import InferenceClient
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 
 
+def _get_hf_tokens() -> list[str]:
+    """Extract primary token from settings and look up any indexed fallback tokens in environment."""
+    tokens = []
+    
+    # 1. Parse from settings.hf_token (allow comma, space, or semicolon separated lists)
+    if settings.hf_token:
+        for t in re.split(r'[,\s;]+', settings.hf_token):
+            if t.strip():
+                tokens.append(t.strip())
+                
+    # 2. Dynamic check for environment fallbacks: HF_TOKEN_2, HF_TOKEN_3, etc.
+    idx = 2
+    while True:
+        token_env = os.getenv(f"HF_TOKEN_{idx}")
+        if not token_env:
+            break
+        token_clean = token_env.strip()
+        if token_clean and token_clean not in tokens:
+            tokens.append(token_clean)
+        idx += 1
+        
+    return tokens
+
+
 def _client() -> InferenceClient | None:
-    if not settings.hf_token:
+    tokens = _get_hf_tokens()
+    if not tokens:
         return None
-    return InferenceClient(token=settings.hf_token)
+    return InferenceClient(token=tokens[0])
 
 
 def _chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3) -> str | None:
-    """Chat via Hugging Face router (OpenAI-compatible)."""
-    if not settings.hf_token:
+    """Chat via Hugging Face router (OpenAI-compatible) with fallback tokens."""
+    tokens = _get_hf_tokens()
+    if not tokens:
+        logger.error("No Hugging Face token found for chat completion.")
         return None
-    try:
-        response = httpx.post(
-            HF_ROUTER_URL,
-            headers={"Authorization": f"Bearer {settings.hf_token}"},
-            json={
-                "model": settings.hf_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
-            timeout=90.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception:
-        return None
+        
+    for token in tokens:
+        try:
+            response = httpx.post(
+                HF_ROUTER_URL,
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "model": settings.hf_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                },
+                timeout=90.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except Exception as exc:
+            logger.warning(
+                f"Hugging Face Chat completion failed with token: {token[:12]}... "
+                f"Exception: {exc}. Trying fallback..."
+            )
+            continue
+            
+    logger.error("All Hugging Face fallback tokens exhausted in chat completion.")
+    return None
+
+
+def generate_advisor_response(prompt: str) -> str | None:
+    """Public wrapper to chat via Hugging Face AI router."""
+    return _chat(prompt, max_tokens=650, temperature=0.4)
 
 
 def analyze_news_sentiment(text: str) -> tuple[str, float]:
-    """FinBERT sentiment for financial news."""
-    client = _client()
-    if not client or not text.strip():
+    """FinBERT sentiment for financial news with fallback tokens."""
+    tokens = _get_hf_tokens()
+    if not tokens or not text.strip():
         return "neutral", 0.5
 
     snippet = text[:512]
-    try:
-        result = client.text_classification(snippet, model=settings.hf_sentiment_model)
-        if isinstance(result, list) and result:
-            label = result[0].get("label", "neutral").lower()
-            score = float(result[0].get("score", 0.5))
-            if "pos" in label:
-                return "positive", score
-            if "neg" in label:
-                return "negative", score
-            return "neutral", score
-    except Exception:
-        pass
+    for token in tokens:
+        try:
+            client = InferenceClient(token=token)
+            result = client.text_classification(snippet, model=settings.hf_sentiment_model)
+            if isinstance(result, list) and result:
+                label = result[0].get("label", "neutral").lower()
+                score = float(result[0].get("score", 0.5))
+                if "pos" in label:
+                    return "positive", score
+                if "neg" in label:
+                    return "negative", score
+                return "neutral", score
+        except Exception as exc:
+            logger.warning(
+                f"Hugging Face Sentiment classification failed with token: {token[:12]}... "
+                f"Exception: {exc}. Trying fallback..."
+            )
+            continue
+            
+    logger.error("All Hugging Face fallback tokens exhausted in sentiment classification.")
     return "neutral", 0.5
 
 

@@ -18,6 +18,7 @@ import { SectorHeatmap } from "./SectorHeatmap";
 import BacktestSimulator from "./BacktestSimulator";
 import UserWorkspace from "./UserWorkspace";
 import AdminDashboard from "./AdminDashboard";
+import ChatbotAdvisor from "./ChatbotAdvisor";
 import { createClient } from "@/lib/supabase/client";
 
 export function Dashboard() {
@@ -44,8 +45,9 @@ export function Dashboard() {
     can_view_signals: true,
     can_backtest: true,
     can_use_portfolio: true,
+    can_use_chatbot: false,
   });
-  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin">("scans");
+  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" >("scans");
 
   // Impersonation state
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
@@ -281,6 +283,24 @@ export function Dashboard() {
           💼 My Portfolio {permissions.can_use_portfolio === false && "🔒"}
         </button>
 
+        <button
+          onClick={() => {
+            if (permissions.can_use_chatbot === true) {
+              setActiveTab("chatbot");
+            }
+          }}
+          disabled={permissions.can_use_chatbot !== true}
+          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+            permissions.can_use_chatbot !== true ? "opacity-45 cursor-not-allowed" : ""
+          } ${
+            activeTab === "chatbot"
+              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
+              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          💬 AI Advisor {permissions.can_use_chatbot !== true && "🔒"}
+        </button>
+
         {sessionUser?.role === "admin" && !impersonatedEmail && (
           <button
             onClick={() => setActiveTab("admin")}
@@ -415,6 +435,16 @@ export function Dashboard() {
             </div>
           ) : (
             <BacktestSimulator currentMode={mode} />
+          )}
+        </>
+      ) : activeTab === "chatbot" ? (
+        <>
+          {permissions.can_use_chatbot !== true ? (
+            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
+              🔒 AI Advisor Chatbot is locked by the administrator.
+            </div>
+          ) : (
+            <ChatbotAdvisor />
           )}
         </>
       ) : (

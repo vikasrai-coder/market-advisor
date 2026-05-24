@@ -22,7 +22,14 @@ DEFAULT_PERMISSIONS = {
     "can_view_signals": True,
     "can_backtest": True,
     "can_use_portfolio": True,
+    "can_use_chatbot": False,
 }
+
+def _get_default_permissions(is_admin: bool) -> Dict[str, bool]:
+    perms = DEFAULT_PERMISSIONS.copy()
+    if is_admin:
+        perms["can_use_chatbot"] = True
+    return perms
 
 ADMIN_EMAIL = "vikas.raiexp@gmail.com"
 
@@ -74,7 +81,7 @@ def get_user_role_profile(user_id: str, email: str | None = None) -> Dict[str, A
                 "user_id": user_id,
                 "email": profile_email,
                 "role": role,
-                "permissions": DEFAULT_PERMISSIONS,
+                "permissions": _get_default_permissions(is_admin),
             }
             inserted = client.table("user_roles").insert(new_profile).execute()
             if inserted.data:
@@ -101,7 +108,7 @@ def get_user_role_profile(user_id: str, email: str | None = None) -> Dict[str, A
         "user_id": user_id,
         "email": profile_email,
         "role": role,
-        "permissions": DEFAULT_PERMISSIONS,
+        "permissions": _get_default_permissions(is_admin),
         "created_at": datetime.utcnow().isoformat(),
     }
     if is_admin:
@@ -186,7 +193,7 @@ def create_user_admin(email: str, password: str) -> Dict[str, Any]:
         "user_id": new_user_id,
         "email": email.strip(),
         "role": role,
-        "permissions": DEFAULT_PERMISSIONS,
+        "permissions": _get_default_permissions(is_admin),
     }
     
     if client:
@@ -361,6 +368,7 @@ def seed_admin_user() -> None:
             "can_view_signals": True,
             "can_backtest": True,
             "can_use_portfolio": True,
+            "can_use_chatbot": True,
         }
     }
     

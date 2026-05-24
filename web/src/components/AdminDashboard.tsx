@@ -225,6 +225,7 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
                   <th className="py-3.5 px-4 font-bold text-center">Signals</th>
                   <th className="py-3.5 px-4 font-bold text-center">Backtest</th>
                   <th className="py-3.5 px-4 font-bold text-center">Portfolio</th>
+                  <th className="py-3.5 px-4 font-bold text-center">Chatbot</th>
                   <th className="py-3.5 px-4 font-bold">Impersonate</th>
                 </tr>
               </thead>
@@ -292,6 +293,14 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
                           type="checkbox"
                           checked={u.permissions?.can_use_portfolio !== false}
                           onChange={() => handlePermissionToggle(u, "can_use_portfolio")}
+                          className="accent-purple-500 h-4 w-4 bg-slate-900 border-slate-800 rounded cursor-pointer"
+                        />
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={u.permissions?.can_use_chatbot === true}
+                          onChange={() => handlePermissionToggle(u, "can_use_chatbot")}
                           className="accent-purple-500 h-4 w-4 bg-slate-900 border-slate-800 rounded cursor-pointer"
                         />
                       </td>
