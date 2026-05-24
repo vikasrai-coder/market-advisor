@@ -11,3 +11,5 @@ node_modules/
 .pytest_cache/
 supabase/.temp/
 .vercel/
+.vercel
+.env*.local
