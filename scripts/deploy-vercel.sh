@@ -25,7 +25,8 @@ add_env() {
 
 echo "==> Deploying API..."
 cd "$ROOT/api"
-$VERCEL link --yes 2>/dev/null || true
+mkdir -p .vercel
+echo '{"projectId":"prj_73t4wzCFbbrQite5oLzwbDI109FJ","orgId":"team_jPEoNRoA3UXR4tAsntrOmVcy","projectName":"market-advisor-api"}' > .vercel/project.json
 
 [[ -f .env ]] && while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" || "$line" =~ ^# ]] && continue
@@ -55,7 +56,8 @@ echo "API URL: $API_URL"
 
 echo "==> Deploying Web..."
 cd "$ROOT/web"
-$VERCEL link --yes 2>/dev/null || true
+mkdir -p .vercel
+echo '{"projectId":"prj_9hDwlYsripR0nrkWsxIYtOaIG2YG","orgId":"team_jPEoNRoA3UXR4tAsntrOmVcy","projectName":"web"}' > .vercel/project.json
 
 [[ -f .env.local ]] && while IFS= read -r line || [[ -n "$line" ]]; do
   [[ "$line" =~ ^NEXT_PUBLIC_ ]] || continue
