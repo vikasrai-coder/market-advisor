@@ -246,7 +246,7 @@ def run_backtest_simulation(
     avg_return = round(statistics.mean(all_returns), 2) if all_returns else 0.0
     outperformance = round(avg_return - index_return, 2)
 
-    return {
+    res_data = {
         "mode": mode,
         "start_date": start_date.isoformat(),
         "check_days": check_days,
@@ -263,6 +263,56 @@ def run_backtest_simulation(
         "results": results,
         "errors": errors,
     }
+
+    # Persist the backtest run to Supabase for historical tracking
+    try:
+        from app.services.supabase_store import get_client
+        client = get_client()
+        if client:
+            run_payload = {
+                "mode": res_data["mode"],
+                "start_date": res_data["start_date"],
+                "check_days": res_data["check_days"],
+                "win_rate": res_data["metrics"]["win_rate"],
+                "avg_return": res_data["metrics"]["avg_return"],
+                "total_picks": res_data["metrics"]["total_picks"],
+                "target_hits": res_data["metrics"]["target_hits"],
+                "stop_hits": res_data["metrics"]["stop_hits"],
+                "held": res_data["metrics"]["held"],
+                "index_return": res_data["metrics"]["index_return"],
+                "outperformance": res_data["metrics"]["outperformance"]
+            }
+            
+            run_res = client.table("backtest_runs").insert(run_payload).execute()
+            if run_res.data:
+                run_id = run_res.data[0]["id"]
+                results_rows = []
+                for r in res_data["results"]:
+                    results_rows.append({
+                        "run_id": run_id,
+                        "rank": r["rank"],
+                        "symbol": r["symbol"],
+                        "name": r.get("name"),
+                        "sector": r.get("sector"),
+                        "is_undervalued": r["is_undervalued"],
+                        "composite_score": r["composite_score"],
+                        "rsi": r.get("rsi"),
+                        "macd": r.get("macd"),
+                        "entry_price": r["entry_price"],
+                        "target_price": r["target_price"],
+                        "stop_loss": r["stop_loss"],
+                        "exit_price": r["exit_price"],
+                        "exit_date": r.get("exit_date"),
+                        "return_pct": r["return_pct"],
+                        "outcome": r["outcome"]
+                    })
+                if results_rows:
+                    client.table("backtest_results").insert(results_rows).execute()
+                    logger.info(f"Successfully stored backtest run {run_id} and {len(results_rows)} detailed results in Supabase.")
+    except Exception as exc:
+        logger.error(f"Error persisting backtest results to Supabase: {exc}", exc_info=True)
+
+    return res_data
 
 
 def _fetch_history_up_to(symbol: str, end_date: date, mode: str) -> pd.DataFrame:
