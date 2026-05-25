@@ -212,3 +212,24 @@ def send_telegram_exit_alert(symbol: str, stop_loss: float, entry_price: float, 
     message += f"Position closed strictly at stop-loss threshold to manage risks and protect trading capital. 🛡️"
 
     return _send_telegram_msg(message)
+
+
+def send_telegram_reversal_alert(symbol: str, price: float, reason: str, trade_mode: str) -> bool:
+    """Format and broadcast a trend reversal warning alert to protect capital."""
+    sym = symbol.replace(".NS", "").replace(".BO", "")
+    sym_clean = sym.upper()
+    
+    # Resolve dynamic company name and Groww slug
+    groww_link = _get_groww_link(symbol=symbol)
+
+    message = f"⚠️ *TECHNICAL TREND REVERSAL* ⚠️\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"📉 Ticker: *{sym_clean}* [⚠️ Turned bearish!]\n"
+    message += f"💵 Current Live Price: *₹{price:.2f}*\n"
+    message += f"📊 Timeframe Mode: *{trade_mode.upper()}*\n"
+    message += f"⚡ Reversal Signal: *{reason}*\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"💼 View Stock on Groww: {groww_link}\n"
+    message += f"⚠️ Action Note: The technical trend has reversed to BEARISH. Consider booking profits or exiting position early to manage risks and preserve capital! 🛡️"
+
+    return _send_telegram_msg(message)

@@ -84,10 +84,65 @@ def reconcile_recommendations() -> dict[str, int]:
                 exit_price = target_price
                 break
 
+        # Check for technical trend reversals to identify if a bullish recommendation turns bearish!
+        if outcome == "pending":
+            try:
+                mode_lower = (rec.get("trade_mode") or "swing").lower()
+                
+                if mode_lower == "intraday":
+                    # Intraday checks hourly candles
+                    hist_60m = ticker.history(period="5d", interval="60m")
+                    if not hist_60m.empty:
+                        from app.services.technicals import compute_intraday_indicators
+                        indicators = compute_intraday_indicators(hist_60m)
+                        
+                        price = indicators.get("price")
+                        sma_9 = indicators.get("sma_9")
+                        sma_21 = indicators.get("sma_21")
+                        bearish_cross = indicators.get("bearish_crossover", False)
+                        
+                        if bearish_cross or (price and sma_9 and sma_21 and price < sma_9 and price < sma_21):
+                            outcome = "bearish_warning"
+                            exit_price = price
+                            reversal_reason = "MACD Bearish Crossover" if bearish_cross else "Price broke below 9/21 hourly SMAs"
+                            
+                            from app.services.notifier import send_telegram_reversal_alert
+                            send_telegram_reversal_alert(symbol, price, reversal_reason, mode_lower)
+                else:
+                    # Swing / longterm / future use daily candles
+                    hist_1d = ticker.history(period="30d", interval="1d")
+                    if not hist_1d.empty:
+                        from app.services.technicals import compute_indicators
+                        indicators = compute_indicators(hist_1d)
+                        
+                        price = indicators.get("price")
+                        macd = indicators.get("macd")
+                        macd_sig = indicators.get("macd_signal")
+                        rsi = indicators.get("rsi")
+                        sma_20 = indicators.get("sma_20")
+                        
+                        is_macd_bearish = macd is not None and macd_sig is not None and macd < macd_sig
+                        is_rsi_bearish = rsi is not None and rsi < 45
+                        is_sma_bearish = price and sma_20 and price < sma_20
+                        
+                        if is_macd_bearish or is_rsi_bearish or is_sma_bearish:
+                            outcome = "bearish_warning"
+                            exit_price = price
+                            
+                            reversal_reason = []
+                            if is_macd_bearish: reversal_reason.append("MACD Bearish Crossover")
+                            if is_rsi_bearish: reversal_reason.append("RSI below 45")
+                            if is_sma_bearish: reversal_reason.append("Price below 20-day SMA")
+                            
+                            from app.services.notifier import send_telegram_reversal_alert
+                            send_telegram_reversal_alert(symbol, price, ", ".join(reversal_reason), mode_lower)
+            except Exception:
+                pass
+
         if outcome != "pending":
             if outcome == "target_hit":
                 target_hits += 1
-            else:
+            elif outcome == "stopped_out":
                 stopped_outs += 1
 
             client.table("recommendations").update({
