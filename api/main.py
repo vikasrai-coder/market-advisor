@@ -1084,50 +1084,6 @@ def stock_detail(symbol: str):
     return res_data
 
 
-@app.get("/api/admin/run-migration")
-def run_db_migration():
-    import pg8000.dbapi
-    errors = []
-    
-    # Try direct IPv6 host
-    try:
-        conn = pg8000.dbapi.connect(
-            host="db.yeluoukipkhfudpdhcpj.supabase.co",
-            port=5432,
-            user="postgres",
-            password="DellCompaq@123",
-            database="postgres"
-        )
-        cursor = conn.cursor()
-        cursor.execute("ALTER TABLE recommendations DROP CONSTRAINT IF EXISTS recommendations_signal_date_rank_action_key;")
-        cursor.execute("ALTER TABLE recommendations ADD CONSTRAINT recommendations_signal_date_rank_action_trade_mode_key UNIQUE (signal_date, rank, action, trade_mode);")
-        conn.commit()
-        conn.close()
-        return {"status": "success", "message": "Constraint updated successfully via direct host!"}
-    except Exception as exc:
-        errors.append(f"Direct host failed: {exc}")
-        
-    # Try pooler host as fallback
-    try:
-        conn = pg8000.dbapi.connect(
-            host="aws-0-ap-south-1.pooler.supabase.com",
-            port=6543,
-            user="postgres.yeluoukipkhfudpdhcpj",
-            password="DellCompaq@123",
-            database="postgres"
-        )
-        cursor = conn.cursor()
-        cursor.execute("ALTER TABLE recommendations DROP CONSTRAINT IF EXISTS recommendations_signal_date_rank_action_key;")
-        cursor.execute("ALTER TABLE recommendations ADD CONSTRAINT recommendations_signal_date_rank_action_trade_mode_key UNIQUE (signal_date, rank, action, trade_mode);")
-        conn.commit()
-        conn.close()
-        return {"status": "success", "message": "Constraint updated successfully via pooler host!"}
-    except Exception as exc:
-        errors.append(f"Pooler host failed: {exc}")
-        
-    return {"status": "error", "errors": errors}
-
-
 if __name__ == "__main__":
     import uvicorn
 

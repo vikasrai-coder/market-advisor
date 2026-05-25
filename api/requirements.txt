@@ -11,4 +11,3 @@ supabase>=2.10.0
 huggingface-hub>=0.26.0
 apscheduler>=3.10.0
 redis>=7.4.0
-pg8000>=1.30.0
