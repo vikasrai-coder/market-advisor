@@ -1,6 +1,7 @@
 """Performance reconciliation service to track target price vs stop loss hits."""
 
 from datetime import date, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 from app.services.supabase_store import get_client
 from app.symbols import normalize_symbol
@@ -34,26 +35,25 @@ def reconcile_recommendations() -> dict[str, int]:
     stopped_outs = 0
     remain_pending = 0
 
-    for rec in pending.data:
+    def reconcile_single(rec) -> str:
         symbol = rec.get("symbol")
         trade_date_str = rec.get("trade_date")
         target_price = rec.get("target_price")
         stop_loss = rec.get("stop_loss")
 
         if not symbol or not trade_date_str or target_price is None or stop_loss is None:
-            continue
+            return "skipped"
 
         try:
             target_price = float(target_price)
             stop_loss = float(stop_loss)
             trade_date = date.fromisoformat(trade_date_str)
         except (ValueError, TypeError):
-            continue
+            return "skipped"
 
         # Don't check performance on the future trade date itself before it happens
         if trade_date > date.today():
-            remain_pending += 1
-            continue
+            return "pending"
 
         # Fetch history since trade date to now
         norm_sym = normalize_symbol(symbol)
@@ -62,8 +62,7 @@ def reconcile_recommendations() -> dict[str, int]:
         hist = ticker.history(start=trade_date.isoformat(), end=(date.today() + timedelta(days=1)).isoformat())
 
         if hist.empty:
-            remain_pending += 1
-            continue
+            return "pending"
 
         # Scan candle highs and lows chronologically since trade date
         outcome = "pending"
@@ -140,11 +139,6 @@ def reconcile_recommendations() -> dict[str, int]:
                 pass
 
         if outcome != "pending":
-            if outcome == "target_hit":
-                target_hits += 1
-            elif outcome == "stopped_out":
-                stopped_outs += 1
-
             client.table("recommendations").update({
                 "performance_status": outcome,
                 "exit_price": exit_price,
@@ -172,8 +166,20 @@ def reconcile_recommendations() -> dict[str, int]:
                     )
             except Exception:
                 pass
-        else:
-            remain_pending += 1
+            return outcome
+        return "pending"
+
+    # Parallelize the reconciliation checks using a ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [pool.submit(reconcile_single, rec) for rec in pending.data]
+        for future in as_completed(futures):
+            res = future.result()
+            if res == "target_hit":
+                target_hits += 1
+            elif res == "stopped_out":
+                stopped_outs += 1
+            elif res == "pending":
+                remain_pending += 1
 
     return {
         "target_hits": target_hits,
