@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -666,10 +667,14 @@ def telegram_test_endpoint():
 
 
 @app.get("/api/cron/daily")
-def vercel_cron_endpoint(authorization: str | None = Header(None)):
+def vercel_cron_endpoint(
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(None),
+):
     """Automated daily cron trigger for Vercel Serverless deployments.
 
-    Reconciles past recommendations first, then scans the market for top buys and sends Telegram alerts.
+    Fires the swing analysis in a background thread and returns 202 immediately
+    so cron-job.org never sees a 30-second timeout.
     """
     cron_secret = os.getenv("CRON_SECRET")
     if cron_secret:
@@ -677,26 +682,36 @@ def vercel_cron_endpoint(authorization: str | None = Header(None)):
         if authorization != expected:
             raise HTTPException(status_code=401, detail="Unauthorized Vercel cron trigger")
 
-    try:
-        # 1. Performance Reconcile
-        from app.services.reconciler import reconcile_recommendations
-        reconcile_recommendations()
+    def _run_daily():
+        try:
+            from app.services.reconciler import reconcile_recommendations
+            reconcile_recommendations()
+        except Exception:
+            pass
+        try:
+            analyzer.run_full_analysis(mode="swing")
+        except Exception:
+            pass
 
-        # 2. Run Daily Scanner analysis
-        analyzer.run_full_analysis(mode="swing")
-        return {
-            "status": "success",
-            "message": "Automated Vercel cron run completed successfully: Reconciler synced & swing recommendations processed."
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    background_tasks.add_task(_run_daily)
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "message": "Daily swing analysis triggered in background.",
+        },
+    )
 
 
 @app.get("/api/cron/intraday")
-def vercel_intraday_cron_endpoint(authorization: str | None = Header(None)):
+def vercel_intraday_cron_endpoint(
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(None),
+):
     """Automated intraday cron trigger for Vercel Serverless deployments (Weekday Market Hours).
 
-    Reconciles past recommendations first, then scans the market for intraday breakouts (60-min MACD/RSI) and sends Telegram alerts.
+    Fires the intraday analysis in a background thread and returns 202 immediately
+    so cron-job.org never sees a 30-second timeout.
     """
     cron_secret = os.getenv("CRON_SECRET")
     if cron_secret:
@@ -704,17 +719,20 @@ def vercel_intraday_cron_endpoint(authorization: str | None = Header(None)):
         if authorization != expected:
             raise HTTPException(status_code=401, detail="Unauthorized Vercel cron trigger")
 
-    try:
-        # Run Intraday Scanner analysis (automatically triggers reconciliations and Telegram alerts)
-        result = analyzer.run_full_analysis(mode="intraday")
-        return {
-            "status": "success",
-            "message": "Automated Vercel intraday cron run completed successfully: Reconciler synced & intraday recommendations processed.",
-            "stocks_analyzed": result.get("stocks_analyzed", 0),
-            "recommendations_count": len(result.get("top_recommendations", [])),
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    def _run_intraday():
+        try:
+            analyzer.run_full_analysis(mode="intraday")
+        except Exception:
+            pass
+
+    background_tasks.add_task(_run_intraday)
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "message": "Intraday analysis triggered in background.",
+        },
+    )
 
 
 @app.post("/api/watchlist/sync")
