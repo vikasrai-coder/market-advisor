@@ -37,6 +37,52 @@ def _send_telegram_msg(message: str) -> bool:
         return False
 
 
+def _get_groww_link(symbol: str, company_name: str | None = None) -> str:
+    """Generate dynamic slugified Groww stock link from company name, falling back to symbol."""
+    import re
+    if not company_name:
+        norm_sym = symbol
+        if not norm_sym.endswith(".NS") and not norm_sym.endswith(".BO"):
+            norm_sym = f"{norm_sym}.NS"
+        try:
+            # Attempt to pull company name instantly from local DB cache
+            from app.services.supabase_store import get_client
+            client = get_client()
+            if client:
+                res = client.table("stocks").select("name").eq("symbol", norm_sym).execute()
+                if res and res.data:
+                    company_name = res.data[0].get("name")
+        except Exception:
+            pass
+
+        # Fallback to yfinance profile search
+        if not company_name:
+            try:
+                from app.services.market_data import fetch_stock_profile
+                profile = fetch_stock_profile(norm_sym)
+                if profile and profile.get("name"):
+                    company_name = profile["name"]
+            except Exception:
+                pass
+
+    if company_name and company_name != symbol:
+        # Convert to lowercase
+        slug = company_name.lower()
+        # Clean up common Indian corporate abbreviations
+        slug = slug.replace(" limited", " ltd")
+        slug = slug.replace(" corp.", " corp")
+        # Strip all non-alphanumeric characters, except spaces/hyphens
+        slug = re.sub(r'[^a-z0-9\s-]', '', slug)
+        # Replace spaces/consecutive hyphens with a single hyphen
+        slug = re.sub(r'[\s-]+', '-', slug)
+        slug = slug.strip('-')
+        return f"https://groww.in/stocks/{slug}"
+
+    # Default fallback to lowercase symbol slug
+    clean_sym = symbol.replace(".NS", "").replace(".BO", "").lower()
+    return f"https://groww.in/stocks/{clean_sym}"
+
+
 def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = "Swing Trade") -> bool:
     """Format and broadcast top picks to the specified Telegram channel/chat."""
     if not recs:
@@ -50,12 +96,15 @@ def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = 
     for r in recs[:5]:  # Broadcast top 5 picks to keep message concise
         sym = r.get("symbol", "").replace(".NS", "").replace(".BO", "")
         sym_clean = sym.upper()
-        sym_lower = sym.lower()
         rank = r.get("rank", 1)
         composite = r.get("composite_score", 0)
         target = r.get("target_price")
         stop = r.get("stop_loss")
         reason = r.get("reasoning", "")
+        
+        # Resolve dynamic company name and Groww slug
+        company_name = r.get("stocks", {}).get("name") if isinstance(r.get("stocks"), dict) else None
+        groww_link = _get_groww_link(symbol=r.get("symbol", ""), company_name=company_name)
         
         short_reason = reason[:160] + "..." if len(reason) > 160 else reason
         undervalued_tag = " [🔥 UNDERVALUED]" if r.get("is_undervalued") else ""
@@ -63,7 +112,7 @@ def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = 
         message += f"#{rank} *{sym_clean}*{undervalued_tag} • Composite: *{composite}*\n"
         if target and stop:
             message += f"🎯 Target: `₹{target:.2f}` • SL: `₹{stop:.2f}`\n"
-        message += f"💼 [Trade on Groww](https://groww.in/stocks/{sym_lower})\n"
+        message += f"💼 [Trade on Groww]({groww_link})\n"
         message += f"💡 AI Rationale: _{short_reason}_\n\n"
 
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -76,12 +125,15 @@ def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
     """Format and broadcast a high-probability buy entry alert."""
     sym = r.get("symbol", "").replace(".NS", "").replace(".BO", "")
     sym_clean = sym.upper()
-    sym_lower = sym.lower()
     target = r.get("target_price")
     stop = r.get("stop_loss")
     score = r.get("composite_score", 0)
     mode = r.get("trade_mode", "Swing").upper()
     reason = r.get("reasoning", "")
+
+    # Resolve dynamic company name and Groww slug
+    company_name = r.get("stocks", {}).get("name") if isinstance(r.get("stocks"), dict) else None
+    groww_link = _get_groww_link(symbol=r.get("symbol", ""), company_name=company_name)
 
     # Calculate potential gain
     gain_pct = 0.0
@@ -103,7 +155,7 @@ def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     if reason:
         message += f"💡 AI Rationale: _{reason[:250]}_\n\n"
-    message += f"💼 Trade on Groww: https://groww.in/stocks/{sym_lower}"
+    message += f"💼 Trade on Groww: {groww_link}"
 
     return _send_telegram_msg(message)
 
@@ -112,7 +164,9 @@ def send_telegram_profit_alert(symbol: str, target_price: float, entry_price: fl
     """Format and broadcast a target-hit profit booking alert."""
     sym = symbol.replace(".NS", "").replace(".BO", "")
     sym_clean = sym.upper()
-    sym_lower = sym.lower()
+    
+    # Resolve dynamic company name and Groww slug
+    groww_link = _get_groww_link(symbol=symbol)
     
     gain_pct = 0.0
     if entry_price > 0:
@@ -127,7 +181,7 @@ def send_telegram_profit_alert(symbol: str, target_price: float, entry_price: fl
         message += f"📈 Net Profit Secured: *+{gain_pct:.1f}%* profit booked!\n"
     message += f"📊 Timeframe Mode: *{trade_mode.upper()}*\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"💼 View Stock on Groww: https://groww.in/stocks/{sym_lower}\n"
+    message += f"💼 View Stock on Groww: {groww_link}\n"
     message += f"Position closed successfully in the green! Capital objective achieved. 💰"
 
     return _send_telegram_msg(message)
@@ -137,7 +191,9 @@ def send_telegram_exit_alert(symbol: str, stop_loss: float, entry_price: float, 
     """Format and broadcast a stop-loss exit alert to protect capital."""
     sym = symbol.replace(".NS", "").replace(".BO", "")
     sym_clean = sym.upper()
-    sym_lower = sym.lower()
+    
+    # Resolve dynamic company name and Groww slug
+    groww_link = _get_groww_link(symbol=symbol)
     
     loss_pct = 0.0
     if entry_price > 0:
@@ -152,7 +208,7 @@ def send_telegram_exit_alert(symbol: str, stop_loss: float, entry_price: float, 
         message += f"📉 Capital Drawdown: *-{loss_pct:.1f}%*\n"
     message += f"📊 Timeframe Mode: *{trade_mode.upper()}*\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"💼 View Stock on Groww: https://groww.in/stocks/{sym_lower}\n"
+    message += f"💼 View Stock on Groww: {groww_link}\n"
     message += f"Position closed strictly at stop-loss threshold to manage risks and protect trading capital. 🛡️"
 
     return _send_telegram_msg(message)
