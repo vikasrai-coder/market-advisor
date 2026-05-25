@@ -20,8 +20,10 @@ fi
 add_env() {
   local dir="$1" key="$2" val="$3"
   echo "  Setting environment variable $key..."
-  (cd "$dir" && printf '%s' "$val" | $VERCEL env add "$key" production --force --yes) >/dev/null 2>&1 || true
+  (cd "$dir" && $VERCEL env rm "$key" production --yes < /dev/null) >/dev/null 2>&1 || true
+  (cd "$dir" && $VERCEL env add "$key" production --value "$val" --yes < /dev/null) >/dev/null 2>&1 || true
 }
+
 
 echo "==> Deploying API..."
 cd "$ROOT/api"
@@ -32,7 +34,7 @@ echo '{"projectId":"prj_73t4wzCFbbrQite5oLzwbDI109FJ","orgId":"team_jPEoNRoA3UXR
   [[ -z "$line" || "$line" =~ ^# ]] && continue
   k="${line%%=*}"; v="${line#*=}"
   case "$k" in API_HOST|API_PORT|ADMIN_EMAIL|ADMIN_PASSWORD) continue ;; esac
-  add_env "$ROOT/api" "$k" "$v"
+  add_env "$ROOT/api" "$k" "$v" < /dev/null
 done < .env
 
 echo "  Deploying API to Vercel..."
@@ -63,10 +65,10 @@ echo '{"projectId":"prj_9hDwlYsripR0nrkWsxIYtOaIG2YG","orgId":"team_jPEoNRoA3UXR
   [[ "$line" =~ ^NEXT_PUBLIC_ ]] || continue
   k="${line%%=*}"; v="${line#*=}"
   [[ "$k" == "NEXT_PUBLIC_API_URL" ]] && v="$API_URL"
-  add_env "$ROOT/web" "$k" "$v"
+  add_env "$ROOT/web" "$k" "$v" < /dev/null
 done < .env.local
 
-add_env "$ROOT/api" "CORS_ORIGINS" "${WEB_URL:-},http://localhost:3000"
+add_env "$ROOT/api" "CORS_ORIGINS" "${WEB_URL:-},http://localhost:3000" < /dev/null
 
 echo "  Deploying Web to Vercel..."
 tmp_log=$(mktemp)
