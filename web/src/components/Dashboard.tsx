@@ -22,6 +22,39 @@ import ChatbotAdvisor from "./ChatbotAdvisor";
 import PennyScans from "./PennyScans";
 import { createClient } from "@/lib/supabase/client";
 
+type PermissionSet = {
+  can_view_charts: boolean;
+  can_view_recommendations: boolean;
+  can_view_heatmap: boolean;
+  can_view_signals: boolean;
+  can_backtest: boolean;
+  can_use_portfolio: boolean;
+  can_use_chatbot: boolean;
+};
+
+type SessionUser = { id: string; email: string; role: string };
+type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans";
+
+const DEFAULT_PERMISSIONS: PermissionSet = {
+  can_view_charts: true,
+  can_view_recommendations: true,
+  can_view_heatmap: true,
+  can_view_signals: true,
+  can_backtest: true,
+  can_use_portfolio: true,
+  can_use_chatbot: false,
+};
+
+type ChatbotPrefill =
+  | {
+      type: "single";
+      holding: { symbol: string; shares: number; buyPrice: number };
+    }
+  | {
+      type: "portfolio";
+      holdings: { symbol: string; shares: number; buyPrice: number }[];
+    };
+
 export function Dashboard() {
   const [mode, setMode] = useState<TradeMode>("swing");
   const [targetDate, setTargetDate] = useState<string>(() => {
@@ -36,30 +69,13 @@ export function Dashboard() {
   const [status, setStatus] = useState<{ supabase: boolean; huggingface: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // Master Admin & Permissions states
-  const [sessionUser, setSessionUser] = useState<{ id: string; email: string; role: string } | null>(null);
-  const [permissions, setPermissions] = useState<any>({
-    can_view_charts: true,
-    can_view_recommendations: true,
-    can_view_heatmap: true,
-    can_view_signals: true,
-    can_backtest: true,
-    can_use_portfolio: true,
-    can_use_chatbot: false,
-  });
-  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans">("scans");
-  const [chatbotPrefill, setChatbotPrefill] = useState<{
-    type: "single" | "portfolio";
-    holding?: { symbol: string; shares: number; buyPrice: number };
-    holdings?: { symbol: string; shares: number; buyPrice: number }[];
-  } | null>(null);
-
-  // Impersonation state
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  const [permissions, setPermissions] = useState<PermissionSet>(DEFAULT_PERMISSIONS);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("scans");
+  const [chatbotPrefill, setChatbotPrefill] = useState<ChatbotPrefill | null>(null);
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
   const [impersonatedId, setImpersonatedId] = useState<string | null>(null);
 
-  // Load session and permissions on startup
   useEffect(() => {
     async function loadSession() {
       try {
@@ -67,7 +83,6 @@ export function Dashboard() {
         let email = "";
         let role = "user";
 
-        // 1. Check offline localStorage session first
         const offlineId = localStorage.getItem("offline_user_id");
         const offlineEmail = localStorage.getItem("offline_user_email");
         const offlineRole = localStorage.getItem("offline_user_role");
@@ -77,7 +92,6 @@ export function Dashboard() {
           email = offlineEmail;
           role = offlineRole || "user";
         } else {
-          // 2. Fallback to Supabase Auth
           try {
             const supabase = createClient();
             const { data } = await supabase.auth.getUser();
@@ -86,53 +100,44 @@ export function Dashboard() {
               email = data.user.email ?? "";
             }
           } catch {
-            // Supabase not reachable — continue with empty session
+            // Offline mode can still use cached local credentials.
           }
         }
 
-        if (userId) {
-          // Set session immediately from local data before API call
-          setSessionUser({ id: userId, email, role });
+        if (!userId) return;
 
-          // Try to fetch backend roles/permissions profile
-          try {
-            const profile = await getUserProfile(userId, email || undefined);
-            setSessionUser({
-              id: userId,
-              email: email || profile.email,
-              role: profile.role,
-            });
+        setSessionUser({ id: userId, email, role });
 
-            // Only use custom profile permissions if not impersonating
-            const sessionImpersonatedEmail = sessionStorage.getItem("impersonated_email");
-            const sessionImpersonatedId = sessionStorage.getItem("impersonated_id");
-            const sessionImpersonatedPermissions = sessionStorage.getItem("impersonated_permissions");
+        try {
+          const profile = await getUserProfile(userId, email || undefined);
+          setSessionUser({ id: userId, email: email || profile.email, role: profile.role });
 
-            if (sessionImpersonatedEmail && sessionImpersonatedId && sessionImpersonatedPermissions) {
-              setImpersonatedEmail(sessionImpersonatedEmail);
-              setImpersonatedId(sessionImpersonatedId);
-              setPermissions(JSON.parse(sessionImpersonatedPermissions));
-            } else {
-              setPermissions(profile.permissions);
-            }
-          } catch (profileErr) {
-            // API unreachable or 404 — keep default full permissions so user can still use the app
-            console.warn("Could not fetch user profile from API, using defaults:", profileErr);
-            // For offline/admin users, apply admin role from localStorage
-            if (role === "admin" || offlineId === "admin-vikas-id") {
-              setSessionUser({ id: userId, email, role: "admin" });
-            }
-            // permissions stay at default full-access set during initialization
+          const storedEmail = sessionStorage.getItem("impersonated_email");
+          const storedId = sessionStorage.getItem("impersonated_id");
+          const storedPermissions = sessionStorage.getItem("impersonated_permissions");
+
+          if (storedEmail && storedId && storedPermissions) {
+            setImpersonatedEmail(storedEmail);
+            setImpersonatedId(storedId);
+            setPermissions(normalizePermissions(JSON.parse(storedPermissions)));
+          } else {
+            setPermissions(normalizePermissions(profile.permissions));
+          }
+        } catch (profileErr) {
+          console.warn("Could not fetch user profile from API, using defaults:", profileErr);
+          if (role === "admin" || offlineId === "admin-vikas-id") {
+            setSessionUser({ id: userId, email, role: "admin" });
           }
         }
       } catch (err) {
         console.error("Failed to load user session:", err);
       }
     }
+
     loadSession();
   }, []);
 
-  const handleImpersonateUser = (email: string, id: string, userPermissions: any) => {
+  const handleImpersonateUser = (email: string, id: string, userPermissions: PermissionSet) => {
     setImpersonatedEmail(email);
     setImpersonatedId(id);
     setPermissions(userPermissions);
@@ -142,32 +147,38 @@ export function Dashboard() {
     setActiveTab("scans");
   };
 
-  const handleExitImpersonation = () => {
+  const handleExitImpersonation = async () => {
     setImpersonatedEmail(null);
     setImpersonatedId(null);
     sessionStorage.removeItem("impersonated_email");
     sessionStorage.removeItem("impersonated_id");
     sessionStorage.removeItem("impersonated_permissions");
-    
-    // Restore master admin credentials
-    if (sessionUser) {
-      window.location.reload();
+
+    if (!sessionUser) {
+      setPermissions(DEFAULT_PERMISSIONS);
+      setActiveTab("scans");
+      return;
     }
+
+    try {
+      const profile = await getUserProfile(sessionUser.id, sessionUser.email || undefined);
+      setSessionUser({ id: sessionUser.id, email: sessionUser.email || profile.email, role: profile.role });
+      setPermissions(normalizePermissions(profile.permissions));
+    } catch {
+      setPermissions(sessionUser.role === "admin" ? DEFAULT_PERMISSIONS : permissions);
+    }
+    setActiveTab("scans");
   };
 
   const handleAnalyzeHoldingFromPortfolio = (symbol: string, shares: number, buyPrice: number) => {
-    setChatbotPrefill({
-      type: "single",
-      holding: { symbol, shares, buyPrice }
-    });
+    setChatbotPrefill({ type: "single", holding: { symbol, shares, buyPrice } });
     setActiveTab("chatbot");
   };
 
-  const handleAnalyzeEntirePortfolioFromPortfolio = (holdings: { symbol: string; shares: number; buyPrice: number }[]) => {
-    setChatbotPrefill({
-      type: "portfolio",
-      holdings
-    });
+  const handleAnalyzeEntirePortfolioFromPortfolio = (
+    holdings: { symbol: string; shares: number; buyPrice: number }[]
+  ) => {
+    setChatbotPrefill({ type: "portfolio", holdings });
     setActiveTab("chatbot");
   };
 
@@ -185,21 +196,19 @@ export function Dashboard() {
       setAllSignals(sigData.signals ?? []);
       if (health) setStatus({ supabase: health.supabase, huggingface: health.huggingface });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load data — is the API running?");
+      setError(e instanceof Error ? e.message : "Could not load data. Is the API running?");
     }
   }, [mode, targetDate]);
 
   useEffect(() => {
-    load();
+    // Initial dashboard hydration depends on API state, so it belongs in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
   }, [load]);
 
   const getSignalsTitle = () => {
     const timeLabel =
-      mode === "intraday"
-        ? "same-day"
-        : mode === "future"
-        ? `setup for ${targetDate}`
-        : "next session";
+      mode === "intraday" ? "same-day" : mode === "future" ? `setup for ${targetDate}` : "next session";
     const dirLabel = signalTypeFilter === "buy" ? "Bullish Momentum Buys" : "Bearish Breakdown Shorts";
     return `${dirLabel} (${timeLabel})`;
   };
@@ -207,148 +216,67 @@ export function Dashboard() {
   const getEmptyStateText = () => {
     switch (mode) {
       case "intraday":
-        return "No intraday recommendations yet. Click 'Scan Intraday Signals' to generate same-day buy picks.";
+        return "No intraday recommendations yet. Run an intraday scan to generate same-day buy picks.";
       case "longterm":
-        return "No long-term recommendations yet. Click 'Run Long-term Analysis' to find multi-month buy picks.";
+        return "No long-term recommendations yet. Run long-term analysis to find multi-month setups.";
       case "future":
-        return `No recommendations found for target date ${targetDate}. Choose a date and run analysis.`;
+        return `No recommendations found for ${targetDate}. Choose another date or run a new scan.`;
       case "swing":
       default:
-        return "No recommendations yet. Click 'Run Swing Trade Analysis' to score stocks and get 10 buy picks.";
+        return "No recommendations yet. Run swing trade analysis to score stocks and generate buy picks.";
     }
   };
 
   const filteredSignals = allSignals.filter((s) => s.signal_type === signalTypeFilter).slice(0, 15);
+  const avgScore = recs.length
+    ? Math.round(recs.reduce((sum, rec) => sum + Number(rec.composite_score || 0), 0) / recs.length)
+    : 0;
+  const visibleTabs = buildTabs({ permissions, sessionUser, impersonatedEmail, onSelect: setActiveTab });
 
   return (
     <>
-      {/* 1. Floating active user impersonation banner */}
       {impersonatedEmail && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-r from-amber-600 to-yellow-600 text-slate-900 font-extrabold px-4 py-3 text-center text-xs shadow-lg flex items-center justify-center gap-3">
-          <span className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-900 animate-ping" />
-            ⚠️ Active Impersonation: View-only simulation for <span className="underline font-black">{impersonatedEmail}</span>
-          </span>
-          <button
-            onClick={handleExitImpersonation}
-            className="px-2.5 py-0.5 rounded bg-slate-950 text-amber-400 font-extrabold text-[10px] uppercase border border-amber-400 hover:bg-slate-900 transition-all cursor-pointer"
-          >
-            Exit Impersonation
-          </button>
+        <div className="fixed inset-x-0 top-0 z-50 border-b border-amber-400/40 bg-amber-400 px-3 py-2 text-slate-950 shadow-lg">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 text-xs font-bold sm:flex-row sm:items-center sm:justify-between">
+            <span className="truncate">
+              Viewing as <span className="underline">{impersonatedEmail}</span>
+            </span>
+            <button
+              onClick={handleExitImpersonation}
+              className="rounded border border-slate-950/25 bg-slate-950 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-300 transition hover:bg-slate-900"
+            >
+              Exit View
+            </button>
+          </div>
         </div>
       )}
 
-      {/* 2. Premium sticky glassmorphic navigation tabs */}
-      <div className="mb-8 flex flex-wrap gap-2.5 border-b border-slate-900 pb-5 items-center">
-        <button
-          onClick={() => setActiveTab("scans")}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-            activeTab === "scans"
-              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
-              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-          }`}
-        >
-          🎯 Scans & Recs
-        </button>
+      <section className="mb-5 grid gap-3 sm:grid-cols-3">
+        <MetricTile label="Recommendations" value={recs.length ? String(recs.length) : "0"} />
+        <MetricTile label="Average Score" value={avgScore ? String(avgScore) : "--"} />
+        <MetricTile label="Signals Loaded" value={String(allSignals.length)} />
+      </section>
 
-        <button
-          onClick={() => {
-            if (permissions.can_view_signals !== false) {
-              setActiveTab("signals");
-            }
-          }}
-          disabled={permissions.can_view_signals === false}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-            permissions.can_view_signals === false ? "opacity-45 cursor-not-allowed" : ""
-          } ${
-            activeTab === "signals"
-              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
-              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-          }`}
-        >
-          ⚡ Momentum Signals {permissions.can_view_signals === false && "🔒"}
-        </button>
-
-        <button
-          onClick={() => {
-            if (permissions.can_backtest !== false) {
-              setActiveTab("backtest");
-            }
-          }}
-          disabled={permissions.can_backtest === false}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-            permissions.can_backtest === false ? "opacity-45 cursor-not-allowed" : ""
-          } ${
-            activeTab === "backtest"
-              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
-              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-          }`}
-        >
-          🧪 Backtest Labs {permissions.can_backtest === false && "🔒"}
-        </button>
-
-        <button
-          onClick={() => {
-            if (permissions.can_use_portfolio !== false) {
-              setActiveTab("portfolio");
-            }
-          }}
-          disabled={permissions.can_use_portfolio === false}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-            permissions.can_use_portfolio === false ? "opacity-45 cursor-not-allowed" : ""
-          } ${
-            activeTab === "portfolio"
-              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
-              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-          }`}
-        >
-          💼 My Portfolio {permissions.can_use_portfolio === false && "🔒"}
-        </button>
-
-        <button
-          onClick={() => {
-            if (permissions.can_use_chatbot === true) {
-              setActiveTab("chatbot");
-            }
-          }}
-          disabled={permissions.can_use_chatbot !== true}
-          className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-            permissions.can_use_chatbot !== true ? "opacity-45 cursor-not-allowed" : ""
-          } ${
-            activeTab === "chatbot"
-              ? "bg-slate-100 text-slate-900 border-slate-200 shadow-md"
-              : "bg-slate-950 text-slate-500 border-slate-900 hover:text-slate-300"
-          }`}
-        >
-          💬 AI Advisor {permissions.can_use_chatbot !== true && "🔒"}
-        </button>
-
-        {sessionUser?.role === "admin" && !impersonatedEmail && (
-          <button
-            onClick={() => setActiveTab("pennyscans")}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
-              activeTab === "pennyscans"
-                ? "bg-gradient-to-r from-amber-600 to-yellow-600 text-slate-950 border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.25)] font-black"
-                : "bg-slate-950 text-amber-500/80 border-slate-900/60 hover:text-amber-300 hover:bg-amber-500/5"
-            }`}
-          >
-            🪙 Penny Swing Scans
-          </button>
-        )}
-
-        {sessionUser?.role === "admin" && !impersonatedEmail && (
-          <button
-            onClick={() => setActiveTab("admin")}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 sm:ml-auto ${
-              activeTab === "admin"
-                ? "bg-purple-600 text-white border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.3)]"
-                : "bg-slate-950 text-purple-400 border-slate-900/60 hover:text-purple-300 hover:bg-slate-900/10"
-            }`}
-          >
-            🛡️ Admin Control Center
-          </button>
-        )}
-      </div>
+      <nav className="sticky top-0 z-30 -mx-4 mb-6 border-y border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:rounded-lg sm:border">
+        <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => !tab.disabled && tab.onSelect(tab.id)}
+              disabled={tab.disabled}
+              className={`shrink-0 rounded-md border px-3 py-2 text-xs font-bold uppercase tracking-wide transition ${
+                activeTab === tab.id
+                  ? tab.activeClass
+                  : "border-slate-800 bg-slate-900/70 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              } ${tab.disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"}`}
+            >
+              {tab.label}
+              {tab.disabled ? " Locked" : ""}
+            </button>
+          ))}
+        </div>
+      </nav>
 
       {error && (
         <div className="mb-6 rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
@@ -356,155 +284,281 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Render active tab content */}
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
       ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <PennyScans />
       ) : activeTab === "scans" ? (
-        <>
-          {permissions.can_view_recommendations === false ? (
-            <div className="mb-6 p-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 text-rose-400 text-sm text-center font-bold">
-              🔒 Access Restricted: Scanner Recommendations are locked by Administrator Vikas Rai.
-            </div>
-          ) : (
-            <>
-              <section className="mb-6 flex flex-col gap-6 rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-                <h2 className="text-base font-semibold text-slate-300">Choose Analysis Mode</h2>
-                <ModeSelector
-                  activeMode={mode}
-                  onChangeMode={setMode}
-                  targetDate={targetDate}
-                  onChangeTargetDate={setTargetDate}
-                />
-              </section>
-
-              <section className="mb-8 flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-                <RunAnalysisButton
-                  mode={mode}
-                  targetDate={mode === "future" ? targetDate : undefined}
-                  onComplete={load}
-                  onLoadingChange={setLoading}
-                />
-                <div className="flex flex-wrap gap-3 text-xs">
-                  <StatusBadge ok={status?.supabase} label="Supabase" />
-                  <StatusBadge ok={status?.huggingface} label="Hugging Face" />
-                  {tradeDate && (
-                    <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-400">
-                      Active Trade Date: {tradeDate}
-                    </span>
-                  )}
-                </div>
-              </section>
-
-              {permissions.can_view_heatmap !== false && !loading && recs.length > 0 && (
-                <SectorHeatmap recs={recs} />
-              )}
-
-              <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
-                {loading && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-slate-950/70 backdrop-blur-sm min-h-[120px]">
-                    <p className="text-sm text-slate-300">Updating results when analysis finishes…</p>
-                  </div>
-                )}
-                {recs.length === 0 ? (
-                  <p className="text-slate-500 py-6">
-                    {getEmptyStateText()}
-                  </p>
-                ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {recs.map((rec) => (
-                      <RecommendationCard
-                        key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`}
-                        rec={rec}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </>
+        permissions.can_view_recommendations === false ? (
+          <LockedPanel title="Scanner Recommendations Locked" detail="Admin access rules hide recommendations for this profile." />
+        ) : (
+          <ScanWorkspace
+            mode={mode}
+            targetDate={targetDate}
+            tradeDate={tradeDate}
+            status={status}
+            loading={loading}
+            recs={recs}
+            canViewHeatmap={permissions.can_view_heatmap !== false}
+            emptyText={getEmptyStateText()}
+            onChangeMode={setMode}
+            onChangeTargetDate={setTargetDate}
+            onComplete={load}
+            onLoadingChange={setLoading}
+          />
+        )
       ) : activeTab === "signals" ? (
-        <>
-          {permissions.can_view_signals === false ? (
-            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 Momentum Breakdowns signals list are restricted on your profile.
-            </div>
-          ) : (
-            <section className="rounded-xl border border-slate-800 bg-slate-900/25 p-6">
-              <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
-                <h2 className="text-xl font-bold tracking-tight text-white">{getSignalsTitle()}</h2>
-                <div className="flex items-center gap-1.5 rounded-lg bg-slate-950 p-1 border border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setSignalTypeFilter("buy")}
-                    className={`rounded px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                      signalTypeFilter === "buy"
-                        ? "bg-emerald-950 text-emerald-300 shadow-md border border-emerald-500/20"
-                        : "text-slate-500 hover:text-slate-300"
-                    }`}
-                  >
-                    📈 Bullish momentum
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSignalTypeFilter("sell")}
-                    className={`rounded px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                      signalTypeFilter === "sell"
-                        ? "bg-red-950 text-red-300 shadow-md border border-red-500/20"
-                        : "text-slate-500 hover:text-slate-300"
-                    }`}
-                  >
-                    📉 Bearish breakdown
-                  </button>
-                </div>
+        permissions.can_view_signals === false ? (
+          <LockedPanel title="Signals Locked" detail="Momentum signals are disabled for this profile." />
+        ) : (
+          <section className="rounded-lg border border-slate-800 bg-slate-900/25 p-4 sm:p-5">
+            <div className="mb-5 flex flex-col gap-4 border-b border-slate-800/80 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-lg font-bold tracking-tight text-white">{getSignalsTitle()}</h2>
+              <div className="grid grid-cols-2 gap-1 rounded-md border border-slate-800 bg-slate-950 p-1">
+                <SegmentButton active={signalTypeFilter === "buy"} onClick={() => setSignalTypeFilter("buy")}>
+                  Buy
+                </SegmentButton>
+                <SegmentButton active={signalTypeFilter === "sell"} tone="red" onClick={() => setSignalTypeFilter("sell")}>
+                  Sell
+                </SegmentButton>
               </div>
-              <SignalList signals={filteredSignals} />
-            </section>
-          )}
-        </>
+            </div>
+            <SignalList signals={filteredSignals} />
+          </section>
+        )
       ) : activeTab === "backtest" ? (
-        <>
-          {permissions.can_backtest === false ? (
-            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-              🔒 Backtest Labs are deactivated on your user account by admin.
-            </div>
-          ) : (
-            <BacktestSimulator currentMode={mode} />
-          )}
-        </>
+        permissions.can_backtest === false ? (
+          <LockedPanel title="Backtest Locked" detail="Backtest Labs are disabled for this account." />
+        ) : (
+          <BacktestSimulator currentMode={mode} />
+        )
       ) : activeTab === "chatbot" ? (
-        <>
-          {permissions.can_use_chatbot !== true ? (
-            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-               🔒 AI Advisor Chatbot is locked by the administrator.
-            </div>
-          ) : (
-            <ChatbotAdvisor
-              prefill={chatbotPrefill}
-              onClearPrefill={() => setChatbotPrefill(null)}
-            />
-          )}
-        </>
+        permissions.can_use_chatbot !== true ? (
+          <LockedPanel title="AI Advisor Locked" detail="AI portfolio advice is disabled by administrator rules." />
+        ) : (
+          <ChatbotAdvisor prefill={chatbotPrefill} onClearPrefill={() => setChatbotPrefill(null)} />
+        )
+      ) : permissions.can_use_portfolio === false ? (
+        <LockedPanel title="Portfolio Locked" detail="Portfolio and watchlist tools are disabled for this account." />
       ) : (
-        <>
-          {permissions.can_use_portfolio === false ? (
-            <div className="p-6 rounded-2xl border border-slate-900 bg-slate-950/20 text-slate-500 text-xs text-center font-bold">
-               🔒 Portfolio & Watchlists Labs are locked by the administrator.
-            </div>
-          ) : (
-            <UserWorkspace
-              userId={impersonatedId || sessionUser?.id || undefined}
-              userEmail={impersonatedEmail || sessionUser?.email || undefined}
-              onAnalyzeHolding={handleAnalyzeHoldingFromPortfolio}
-              onAnalyzeEntirePortfolio={handleAnalyzeEntirePortfolioFromPortfolio}
-              canUseChatbot={permissions.can_use_chatbot === true}
-            />
-          )}
-        </>
+        <UserWorkspace
+          userId={impersonatedId || sessionUser?.id || undefined}
+          userEmail={impersonatedEmail || sessionUser?.email || undefined}
+          onAnalyzeHolding={handleAnalyzeHoldingFromPortfolio}
+          onAnalyzeEntirePortfolio={handleAnalyzeEntirePortfolioFromPortfolio}
+          canUseChatbot={permissions.can_use_chatbot === true}
+        />
       )}
     </>
+  );
+}
+
+function ScanWorkspace({
+  mode,
+  targetDate,
+  tradeDate,
+  status,
+  loading,
+  recs,
+  canViewHeatmap,
+  emptyText,
+  onChangeMode,
+  onChangeTargetDate,
+  onComplete,
+  onLoadingChange,
+}: {
+  mode: TradeMode;
+  targetDate: string;
+  tradeDate: string | null;
+  status: { supabase: boolean; huggingface: boolean } | null;
+  loading: boolean;
+  recs: Recommendation[];
+  canViewHeatmap: boolean;
+  emptyText: string;
+  onChangeMode: (mode: TradeMode) => void;
+  onChangeTargetDate: (date: string) => void;
+  onComplete: () => void;
+  onLoadingChange: (loading: boolean) => void;
+}) {
+  return (
+    <>
+      <section className="mb-4 rounded-lg border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-100">Analysis Mode</h2>
+            <p className="text-sm text-slate-500">Pick horizon first. Results, signals, and backtests follow the same mode.</p>
+          </div>
+          {tradeDate && (
+            <span className="text-xs font-medium text-slate-400">
+              Trade date: <span className="text-slate-200">{tradeDate}</span>
+            </span>
+          )}
+        </div>
+        <ModeSelector
+          activeMode={mode}
+          onChangeMode={onChangeMode}
+          targetDate={targetDate}
+          onChangeTargetDate={onChangeTargetDate}
+        />
+      </section>
+
+      <section className="mb-6 rounded-lg border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
+        <RunAnalysisButton
+          mode={mode}
+          targetDate={mode === "future" ? targetDate : undefined}
+          onComplete={onComplete}
+          onLoadingChange={onLoadingChange}
+        />
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <StatusBadge ok={status?.supabase} label="Supabase" />
+          <StatusBadge ok={status?.huggingface} label="Hugging Face" />
+        </div>
+      </section>
+
+      {canViewHeatmap && !loading && recs.length > 0 && <SectorHeatmap recs={recs} />}
+
+      <div className={`relative ${loading ? "pointer-events-none" : ""}`}>
+        {loading && (
+          <div className="absolute inset-0 z-10 flex min-h-[140px] items-center justify-center rounded-lg bg-slate-950/75 px-4 text-center backdrop-blur-sm">
+            <p className="text-sm text-slate-300">Updating results when analysis finishes...</p>
+          </div>
+        )}
+        {recs.length === 0 ? (
+          <EmptyState title="No Picks Yet" detail={emptyText} />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {recs.map((rec) => (
+              <RecommendationCard key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`} rec={rec} />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function buildTabs({
+  permissions,
+  sessionUser,
+  impersonatedEmail,
+  onSelect,
+}: {
+  permissions: PermissionSet;
+  sessionUser: SessionUser | null;
+  impersonatedEmail: string | null;
+  onSelect: (tab: DashboardTab) => void;
+}) {
+  const tabs: {
+    id: DashboardTab;
+    label: string;
+    disabled?: boolean;
+    activeClass: string;
+    onSelect: (tab: DashboardTab) => void;
+  }[] = [
+    { id: "scans", label: "Scans", activeClass: "border-slate-200 bg-slate-100 text-slate-950", onSelect },
+    {
+      id: "signals",
+      label: "Signals",
+      disabled: permissions.can_view_signals === false,
+      activeClass: "border-emerald-400/60 bg-emerald-950/70 text-emerald-200",
+      onSelect,
+    },
+    {
+      id: "backtest",
+      label: "Backtest",
+      disabled: permissions.can_backtest === false,
+      activeClass: "border-sky-400/60 bg-sky-950/70 text-sky-200",
+      onSelect,
+    },
+    {
+      id: "portfolio",
+      label: "Portfolio",
+      disabled: permissions.can_use_portfolio === false,
+      activeClass: "border-indigo-400/60 bg-indigo-950/70 text-indigo-200",
+      onSelect,
+    },
+    {
+      id: "chatbot",
+      label: "AI Advisor",
+      disabled: permissions.can_use_chatbot !== true,
+      activeClass: "border-cyan-400/60 bg-cyan-950/70 text-cyan-100",
+      onSelect,
+    },
+  ];
+
+  if (sessionUser?.role === "admin" && !impersonatedEmail) {
+    tabs.push(
+      {
+        id: "pennyscans",
+        label: "Penny Scans",
+        activeClass: "border-amber-400/70 bg-amber-500 text-slate-950",
+        onSelect,
+      },
+      {
+        id: "admin",
+        label: "Admin",
+        activeClass: "border-fuchsia-400/60 bg-fuchsia-950/70 text-fuchsia-100",
+        onSelect,
+      }
+    );
+  }
+
+  return tabs;
+}
+
+function normalizePermissions(value: Partial<PermissionSet> | null | undefined): PermissionSet {
+  return { ...DEFAULT_PERMISSIONS, ...(value ?? {}) };
+}
+
+function SegmentButton({
+  active,
+  tone = "emerald",
+  onClick,
+  children,
+}: {
+  active: boolean;
+  tone?: "emerald" | "red";
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const activeClass = tone === "red" ? "bg-red-900/70 text-red-200" : "bg-emerald-900/70 text-emerald-200";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded px-3 py-2 text-xs font-bold transition ${
+        active ? activeClass : "text-slate-500 hover:text-slate-300"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/45 px-4 py-3">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-black tracking-tight text-white">{value}</p>
+    </div>
+  );
+}
+
+function LockedPanel({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/35 p-6 text-center">
+      <h2 className="text-base font-bold text-slate-200">{title}</h2>
+      <p className="mt-2 text-sm text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/25 p-6">
+      <h2 className="text-base font-bold text-slate-200">{title}</h2>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{detail}</p>
+    </div>
   );
 }
 

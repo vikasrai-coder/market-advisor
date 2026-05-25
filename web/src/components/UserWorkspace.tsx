@@ -8,7 +8,6 @@ import {
   sellHolding,
   syncWatchlist,
   UserWatchlistItem,
-  UserPortfolioItem,
   UserPortfolioResponse,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
@@ -21,6 +20,27 @@ interface UserWorkspaceProps {
   canUseChatbot?: boolean;
 }
 
+type SyncStatus =
+  | {
+      success: true;
+      large_count: number;
+      mid_count: number;
+      small_count: number;
+      updated_at: string;
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+function getErrorMessage(err: unknown, fallback: string) {
+  if (err instanceof TypeError && err.message === "Failed to fetch") {
+    return "API server is offline. Start the backend on port 8000, then refresh this workspace.";
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 export default function UserWorkspace({
   userId: propUserId,
   userEmail: propUserEmail,
@@ -28,7 +48,7 @@ export default function UserWorkspace({
   onAnalyzeEntirePortfolio,
   canUseChatbot = false,
 }: UserWorkspaceProps = {}) {
-  const [userId, setUserId] = useState<string>("default-trader-admin");
+  const [sessionUserId, setSessionUserId] = useState<string>("");
   const [watchlist, setWatchlist] = useState<UserWatchlistItem[]>([]);
   const [portfolio, setPortfolio] = useState<UserPortfolioResponse | null>(null);
   
@@ -46,48 +66,47 @@ export default function UserWorkspace({
 
   // Sync state
   const [syncing, setSyncing] = useState<boolean>(false);
-  const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const effectiveUserId = propUserId || sessionUserId || "default-trader-admin";
 
-  // Load user session if available, respecting the propUserId if passed
   useEffect(() => {
-    if (propUserId) {
-      setUserId(propUserId);
-      return;
-    }
+    if (propUserId) return;
     
     async function checkUser() {
       try {
         const supabase = createClient();
         const { data } = await supabase.auth.getUser();
         if (data?.user?.id) {
-          setUserId(data.user.id);
+          setSessionUserId(data.user.id);
         }
-      } catch (err) {
-        // Fallback to default
+      } catch {
+        setSessionUserId("");
       }
     }
-    checkUser();
+    void checkUser();
   }, [propUserId]);
 
   const loadData = useCallback(async () => {
     try {
       const [watchData, portData] = await Promise.all([
-        getUserWatchlist(userId),
-        getUserPortfolio(userId),
+        getUserWatchlist(effectiveUserId),
+        getUserPortfolio(effectiveUserId),
       ]);
       setWatchlist(watchData.watchlist ?? []);
       setPortfolio(portData);
       setApiConnected(true);
     } catch (err) {
-      console.warn("Failed to load workspace data (API may be starting up):", err);
       setApiConnected(false);
-      // Keep existing state, don't wipe data
+      setWatchlistError(getErrorMessage(err, "Could not load watchlist."));
+      setPortfolioError(getErrorMessage(err, "Could not load portfolio."));
     }
-  }, [userId]);
+  }, [effectiveUserId]);
 
   useEffect(() => {
-    loadData();
+    // Workspace hydration is an API synchronization effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadData();
   }, [loadData]);
 
   // Handle watchlists
@@ -97,22 +116,23 @@ export default function UserWorkspace({
     setWatchlistLoading(true);
     setWatchlistError(null);
     try {
-      await addToWatchlist(userId, newSymbol.trim().toUpperCase());
+      await addToWatchlist(effectiveUserId, newSymbol.trim().toUpperCase());
       setNewSymbol("");
       await loadData();
-    } catch (err: any) {
-      setWatchlistError(err?.message || "Failed to add to watchlist");
+    } catch (err) {
+      setWatchlistError(getErrorMessage(err, "Failed to add to watchlist"));
     } finally {
       setWatchlistLoading(false);
     }
   };
 
   const handleRemoveFromWatchlist = async (sym: string) => {
+    setWatchlistError(null);
     try {
-      await removeFromWatchlist(userId, sym);
+      await removeFromWatchlist(effectiveUserId, sym);
       await loadData();
     } catch (err) {
-      console.error(err);
+      setWatchlistError(getErrorMessage(err, "Failed to remove from watchlist"));
     }
   };
 
@@ -123,24 +143,25 @@ export default function UserWorkspace({
     setPortfolioLoading(true);
     setPortfolioError(null);
     try {
-      await buyHolding(userId, buySymbol.trim().toUpperCase(), buyQty, buyPriceInput);
+      await buyHolding(effectiveUserId, buySymbol.trim().toUpperCase(), buyQty, buyPriceInput);
       setBuySymbol("");
       setBuyQty(0);
       setBuyPriceInput(0);
       await loadData();
-    } catch (err: any) {
-      setPortfolioError(err?.message || "Transaction failed");
+    } catch (err) {
+      setPortfolioError(getErrorMessage(err, "Transaction failed"));
     } finally {
       setPortfolioLoading(false);
     }
   };
 
   const handleSellPosition = async (sym: string, qty: number) => {
+    setPortfolioError(null);
     try {
-      await sellHolding(userId, sym, qty);
+      await sellHolding(effectiveUserId, sym, qty);
       await loadData();
     } catch (err) {
-      console.error(err);
+      setPortfolioError(getErrorMessage(err, "Sell transaction failed"));
     }
   };
 
@@ -159,12 +180,13 @@ export default function UserWorkspace({
   // Sync Watchlist CSV
   const handleSyncWatchlist = async () => {
     setSyncing(true);
+    setSyncStatus(null);
     try {
       const status = await syncWatchlist();
-      setSyncStatus(status);
+      setSyncStatus({ ...status, success: true });
       await loadData();
     } catch (err) {
-      console.error(err);
+      setSyncStatus({ success: false, message: getErrorMessage(err, "Sync failed") });
     } finally {
       setSyncing(false);
     }
@@ -182,10 +204,15 @@ export default function UserWorkspace({
           <p className="text-xs text-slate-400 mt-1 mb-4 leading-relaxed">
             Dynamic Nifty 500 scanner downloading live CSV indices directly from NSE archives to classify large, mid, and small-caps.
           </p>
+          {apiConnected === false && (
+            <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
+              API server is offline. Portfolio and watchlist actions need the backend at localhost:8000.
+            </div>
+          )}
 
           <button
             onClick={handleSyncWatchlist}
-            disabled={syncing}
+            disabled={syncing || apiConnected === false}
             className="w-full h-10 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:from-emerald-800/40 disabled:to-teal-800/40 text-slate-100 font-bold rounded-xl flex items-center justify-center gap-2 border border-emerald-500/20 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer"
           >
             {syncing ? (
@@ -202,23 +229,29 @@ export default function UserWorkspace({
           </button>
 
           {syncStatus && (
-            <div className="mt-4 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-xs text-slate-300 space-y-1.5">
-              <div className="flex justify-between">
-                <span>Large Cap (Nifty 100):</span>
-                <span className="font-extrabold text-emerald-400">{syncStatus.large_count} stocks</span>
+            syncStatus.success ? (
+              <div className="mt-4 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-xs text-slate-300 space-y-1.5">
+                <div className="flex justify-between">
+                  <span>Large Cap (Nifty 100):</span>
+                  <span className="font-extrabold text-emerald-400">{syncStatus.large_count} stocks</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Mid Cap (Midcap 100):</span>
+                  <span className="font-extrabold text-emerald-400">{syncStatus.mid_count} stocks</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Small Cap (Smallcap 250):</span>
+                  <span className="font-extrabold text-emerald-400">{syncStatus.small_count} stocks</span>
+                </div>
+                <div className="text-[10px] text-slate-500 text-right pt-1.5 border-t border-slate-900">
+                  Last synced: {syncStatus.updated_at ? new Date(syncStatus.updated_at).toLocaleTimeString() : "Just now"}
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>Mid Cap (Midcap 100):</span>
-                <span className="font-extrabold text-emerald-400">{syncStatus.mid_count} stocks</span>
+            ) : (
+              <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-200">
+                {syncStatus.message}
               </div>
-              <div className="flex justify-between">
-                <span>Small Cap (Smallcap 250):</span>
-                <span className="font-extrabold text-emerald-400">{syncStatus.small_count} stocks</span>
-              </div>
-              <div className="text-[10px] text-slate-500 text-right pt-1.5 border-t border-slate-900">
-                Last synced: {syncStatus.updated_at ? new Date(syncStatus.updated_at).toLocaleTimeString() : "Just now"}
-              </div>
-            </div>
+            )
           )}
         </div>
 
@@ -238,7 +271,7 @@ export default function UserWorkspace({
             />
             <button
               type="submit"
-              disabled={watchlistLoading}
+              disabled={watchlistLoading || apiConnected === false}
               className="px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-emerald-400 text-xs font-bold rounded-xl flex items-center justify-center transition-colors cursor-pointer"
             >
               Add
@@ -421,6 +454,7 @@ export default function UserWorkspace({
                           )}
                           <button
                             onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
+                            disabled={apiConnected === false}
                             className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer shrink-0"
                           >
                             Sell All
@@ -483,7 +517,7 @@ export default function UserWorkspace({
 
             <button
               type="submit"
-              disabled={portfolioLoading}
+              disabled={portfolioLoading || apiConnected === false}
               className="h-[34px] w-full bg-slate-100 hover:bg-white text-slate-900 font-extrabold rounded-xl text-xs flex items-center justify-center transition-all cursor-pointer border border-slate-200 shadow-sm"
             >
               Add Shares
