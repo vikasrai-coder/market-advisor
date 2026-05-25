@@ -49,6 +49,8 @@ def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = 
 
     for r in recs[:5]:  # Broadcast top 5 picks to keep message concise
         sym = r.get("symbol", "").replace(".NS", "").replace(".BO", "")
+        sym_clean = sym.upper()
+        sym_lower = sym.lower()
         rank = r.get("rank", 1)
         composite = r.get("composite_score", 0)
         target = r.get("target_price")
@@ -58,13 +60,14 @@ def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = 
         short_reason = reason[:160] + "..." if len(reason) > 160 else reason
         undervalued_tag = " [🔥 UNDERVALUED]" if r.get("is_undervalued") else ""
 
-        message += f"#{rank} *{sym}*{undervalued_tag} • Composite: *{composite}*\n"
+        message += f"#{rank} *{sym_clean}*{undervalued_tag} • Composite: *{composite}*\n"
         if target and stop:
             message += f"🎯 Target: `₹{target:.2f}` • SL: `₹{stop:.2f}`\n"
+        message += f"💼 [Trade on Groww](https://groww.in/stocks/{sym_lower})\n"
         message += f"💡 AI Rationale: _{short_reason}_\n\n"
 
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"🔗 View live charts at: {os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')}"
+    message += f"🔗 Start Trading on Groww: https://groww.in"
 
     return _send_telegram_msg(message)
 
@@ -72,6 +75,8 @@ def send_telegram_recommendations(recs: list[dict[str, Any]], mode_label: str = 
 def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
     """Format and broadcast a high-probability buy entry alert."""
     sym = r.get("symbol", "").replace(".NS", "").replace(".BO", "")
+    sym_clean = sym.upper()
+    sym_lower = sym.lower()
     target = r.get("target_price")
     stop = r.get("stop_loss")
     score = r.get("composite_score", 0)
@@ -87,7 +92,7 @@ def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
 
     message = f"🚨 *HIGH-PROBABILITY BUY ENTRY* 🚨\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"📈 Ticker: *{sym}*{undervalued_tag}\n"
+    message += f"📈 Ticker: *{sym_clean}*{undervalued_tag}\n"
     message += f"📊 Trade Mode: *{mode}*\n"
     message += f"⚡ Signal Score: *{score}*\n"
     message += f"💵 Recommended Entry Zone: *₹{entry_price:.2f}*\n"
@@ -98,7 +103,7 @@ def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     if reason:
         message += f"💡 AI Rationale: _{reason[:250]}_\n\n"
-    message += f"🔗 View live details: {os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')}"
+    message += f"💼 Trade on Groww: https://groww.in/stocks/{sym_lower}"
 
     return _send_telegram_msg(message)
 
@@ -106,6 +111,8 @@ def send_telegram_entry_alert(r: dict[str, Any], entry_price: float) -> bool:
 def send_telegram_profit_alert(symbol: str, target_price: float, entry_price: float, trade_mode: str) -> bool:
     """Format and broadcast a target-hit profit booking alert."""
     sym = symbol.replace(".NS", "").replace(".BO", "")
+    sym_clean = sym.upper()
+    sym_lower = sym.lower()
     
     gain_pct = 0.0
     if entry_price > 0:
@@ -113,13 +120,14 @@ def send_telegram_profit_alert(symbol: str, target_price: float, entry_price: fl
 
     message = f"🎉 *PROFIT BOOKING ACHIEVED* 🎉\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"🚀 Ticker: *{sym}* [🔥 target hit]\n"
+    message += f"🚀 Ticker: *{sym_clean}* [🔥 target hit]\n"
     message += f"🏆 Target Price Reached: *₹{target_price:.2f}*\n"
     if entry_price > 0:
         message += f"💵 Initial Buy Entry: *₹{entry_price:.2f}*\n"
         message += f"📈 Net Profit Secured: *+{gain_pct:.1f}%* profit booked!\n"
     message += f"📊 Timeframe Mode: *{trade_mode.upper()}*\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"💼 View Stock on Groww: https://groww.in/stocks/{sym_lower}\n"
     message += f"Position closed successfully in the green! Capital objective achieved. 💰"
 
     return _send_telegram_msg(message)
@@ -128,6 +136,8 @@ def send_telegram_profit_alert(symbol: str, target_price: float, entry_price: fl
 def send_telegram_exit_alert(symbol: str, stop_loss: float, entry_price: float, trade_mode: str) -> bool:
     """Format and broadcast a stop-loss exit alert to protect capital."""
     sym = symbol.replace(".NS", "").replace(".BO", "")
+    sym_clean = sym.upper()
+    sym_lower = sym.lower()
     
     loss_pct = 0.0
     if entry_price > 0:
@@ -135,13 +145,14 @@ def send_telegram_exit_alert(symbol: str, stop_loss: float, entry_price: float, 
 
     message = f"⚠️ *EXIT SYSTEM / STOP LOSS HIT* ⚠️\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"📉 Ticker: *{sym}* [❌ stop loss triggered]\n"
+    message += f"📉 Ticker: *{sym_clean}* [❌ stop loss triggered]\n"
     message += f"🛡️ Stop Price Triggered: *₹{stop_loss:.2f}*\n"
     if entry_price > 0:
         message += f"💵 Initial Buy Entry: *₹{entry_price:.2f}*\n"
         message += f"📉 Capital Drawdown: *-{loss_pct:.1f}%*\n"
     message += f"📊 Timeframe Mode: *{trade_mode.upper()}*\n"
     message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"💼 View Stock on Groww: https://groww.in/stocks/{sym_lower}\n"
     message += f"Position closed strictly at stop-loss threshold to manage risks and protect trading capital. 🛡️"
 
     return _send_telegram_msg(message)

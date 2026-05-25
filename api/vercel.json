@@ -6,5 +6,15 @@
       "maxDuration": 300,
       "memory": 1024
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/daily",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/intraday",
+      "schedule": "0 4-10 * * 1-5"
+    }
+  ]
 }

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -661,6 +661,58 @@ def telegram_test_endpoint():
             return {"success": True, "message": "Telegram test alert sent successfully! Check your Telegram."}
         else:
             return {"success": False, "message": "Telegram not configured or send failed. Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID."}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cron/daily")
+def vercel_cron_endpoint(authorization: str | None = Header(None)):
+    """Automated daily cron trigger for Vercel Serverless deployments.
+
+    Reconciles past recommendations first, then scans the market for top buys and sends Telegram alerts.
+    """
+    cron_secret = os.getenv("CRON_SECRET")
+    if cron_secret:
+        expected = f"Bearer {cron_secret}"
+        if authorization != expected:
+            raise HTTPException(status_code=401, detail="Unauthorized Vercel cron trigger")
+
+    try:
+        # 1. Performance Reconcile
+        from app.services.reconciler import reconcile_recommendations
+        reconcile_recommendations()
+
+        # 2. Run Daily Scanner analysis
+        analyzer.run_full_analysis(mode="swing")
+        return {
+            "status": "success",
+            "message": "Automated Vercel cron run completed successfully: Reconciler synced & swing recommendations processed."
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cron/intraday")
+def vercel_intraday_cron_endpoint(authorization: str | None = Header(None)):
+    """Automated intraday cron trigger for Vercel Serverless deployments (Weekday Market Hours).
+
+    Reconciles past recommendations first, then scans the market for intraday breakouts (60-min MACD/RSI) and sends Telegram alerts.
+    """
+    cron_secret = os.getenv("CRON_SECRET")
+    if cron_secret:
+        expected = f"Bearer {cron_secret}"
+        if authorization != expected:
+            raise HTTPException(status_code=401, detail="Unauthorized Vercel cron trigger")
+
+    try:
+        # Run Intraday Scanner analysis (automatically triggers reconciliations and Telegram alerts)
+        result = analyzer.run_full_analysis(mode="intraday")
+        return {
+            "status": "success",
+            "message": "Automated Vercel intraday cron run completed successfully: Reconciler synced & intraday recommendations processed.",
+            "stocks_analyzed": result.get("stocks_analyzed", 0),
+            "recommendations_count": len(result.get("top_recommendations", [])),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
