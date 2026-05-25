@@ -72,8 +72,11 @@ def insert_metrics(client: Client, row: dict[str, Any]) -> None:
     client.table("stock_metrics").insert(_pick(row, METRIC_COLUMNS)).execute()
 
 
-def clear_recommendations_for_date(client: Client, signal_date: date) -> None:
-    client.table("recommendations").delete().eq("signal_date", signal_date.isoformat()).execute()
+def clear_recommendations_for_date(client: Client, signal_date: date, trade_mode: str | None = None) -> None:
+    query = client.table("recommendations").delete().eq("signal_date", signal_date.isoformat())
+    if trade_mode:
+        query = query.eq("trade_mode", trade_mode)
+    query.execute()
 
 
 def insert_recommendations(client: Client, rows: list[dict[str, Any]]) -> None:
@@ -91,8 +94,11 @@ def insert_recommendations(client: Client, rows: list[dict[str, Any]]) -> None:
                 raise exc
 
 
-def clear_signals_for_date(client: Client, signal_date: date) -> None:
-    client.table("trading_signals").delete().eq("signal_date", signal_date.isoformat()).execute()
+def clear_signals_for_date(client: Client, signal_date: date, trade_mode: str | None = None) -> None:
+    query = client.table("trading_signals").delete().eq("signal_date", signal_date.isoformat())
+    if trade_mode:
+        query = query.eq("trade_mode", trade_mode)
+    query.execute()
 
 
 def insert_signals(client: Client, rows: list[dict[str, Any]]) -> None:

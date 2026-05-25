@@ -60,8 +60,8 @@ def run_full_analysis(
     run_id: str | None = None
     if client:
         run_id = supabase_store.start_run(client)
-        supabase_store.clear_recommendations_for_date(client, signal_date)
-        supabase_store.clear_signals_for_date(client, signal_date)
+        supabase_store.clear_recommendations_for_date(client, signal_date, trade_mode=mode)
+        supabase_store.clear_signals_for_date(client, signal_date, trade_mode=mode)
 
     symbols = market_data.get_watchlist()
     total_symbols = len(symbols)
