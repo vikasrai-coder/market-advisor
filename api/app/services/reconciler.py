@@ -94,6 +94,29 @@ def reconcile_recommendations() -> dict[str, int]:
                 "performance_status": outcome,
                 "exit_price": exit_price,
             }).eq("id", rec["id"]).execute()
+
+            try:
+                from app.services.notifier import send_telegram_profit_alert, send_telegram_exit_alert
+                entry_price = float(rec.get("price") or rec.get("buy_price") or rec.get("entry") or 0.0)
+                if entry_price == 0.0 and target_price:
+                    entry_price = round(target_price / 1.05, 2)
+
+                if outcome == "target_hit":
+                    send_telegram_profit_alert(
+                        symbol=symbol,
+                        target_price=target_price,
+                        entry_price=entry_price,
+                        trade_mode=rec.get("trade_mode") or "Swing"
+                    )
+                elif outcome == "stopped_out":
+                    send_telegram_exit_alert(
+                        symbol=symbol,
+                        stop_loss=stop_loss,
+                        entry_price=entry_price,
+                        trade_mode=rec.get("trade_mode") or "Swing"
+                    )
+            except Exception:
+                pass
         else:
             remain_pending += 1
 

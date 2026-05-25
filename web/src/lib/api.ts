@@ -366,6 +366,26 @@ export async function sendTelegramTest() {
   });
 }
 
+export type PennyScanItem = {
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  rsi: number;
+  sma_5: number;
+  entry: number;
+  exit_today: number;
+  exit_tomorrow: number;
+  stop_loss: number;
+  recommendation: string;
+  verdict: string;
+};
+
+export async function adminGetPennyScans() {
+  return fetchJson<{ penny_scans: PennyScanItem[] }>("/api/admin/penny-scans");
+}
+
 export async function askChatbot(message: string, symbol?: string, shares?: number, buyPrice?: number) {
   return fetchJson<{ response: string }>("/api/chatbot/ask", {
     method: "POST",

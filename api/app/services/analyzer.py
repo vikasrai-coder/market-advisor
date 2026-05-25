@@ -266,8 +266,20 @@ def run_full_analysis(
 
     # Broadcast to Telegram if configured
     try:
-        from app.services.notifier import send_telegram_recommendations
+        from app.services.notifier import send_telegram_recommendations, send_telegram_entry_alert
         send_telegram_recommendations(recommendations, cfg.label)
+        
+        # Dispatch specific high-probability buy entry alerts
+        for rec in recommendations:
+            score = rec.get("composite_score", 0)
+            is_undervalued = rec.get("is_undervalued", False)
+            confidence = rec.get("ai_confidence", 0.5)
+            
+            match = next((item for item in scored if item["symbol"] == rec["symbol"]), None)
+            price = match["metrics"].get("price") if match else (rec.get("target_price", 100) / 1.05)
+            
+            if score >= 70 or is_undervalued or confidence >= 0.75:
+                send_telegram_entry_alert(rec, price)
     except Exception:
         pass
 

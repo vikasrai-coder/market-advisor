@@ -19,6 +19,7 @@ import BacktestSimulator from "./BacktestSimulator";
 import UserWorkspace from "./UserWorkspace";
 import AdminDashboard from "./AdminDashboard";
 import ChatbotAdvisor from "./ChatbotAdvisor";
+import PennyScans from "./PennyScans";
 import { createClient } from "@/lib/supabase/client";
 
 export function Dashboard() {
@@ -47,7 +48,7 @@ export function Dashboard() {
     can_use_portfolio: true,
     can_use_chatbot: false,
   });
-  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" >("scans");
+  const [activeTab, setActiveTab] = useState<"scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans">("scans");
   const [chatbotPrefill, setChatbotPrefill] = useState<{
     type: "single" | "portfolio";
     holding?: { symbol: string; shares: number; buyPrice: number };
@@ -324,6 +325,19 @@ export function Dashboard() {
 
         {sessionUser?.role === "admin" && !impersonatedEmail && (
           <button
+            onClick={() => setActiveTab("pennyscans")}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 ${
+              activeTab === "pennyscans"
+                ? "bg-gradient-to-r from-amber-600 to-yellow-600 text-slate-950 border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.25)] font-black"
+                : "bg-slate-950 text-amber-500/80 border-slate-900/60 hover:text-amber-300 hover:bg-amber-500/5"
+            }`}
+          >
+            🪙 Penny Swing Scans
+          </button>
+        )}
+
+        {sessionUser?.role === "admin" && !impersonatedEmail && (
+          <button
             onClick={() => setActiveTab("admin")}
             className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1.5 sm:ml-auto ${
               activeTab === "admin"
@@ -345,6 +359,8 @@ export function Dashboard() {
       {/* Render active tab content */}
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
+      ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (
+        <PennyScans />
       ) : activeTab === "scans" ? (
         <>
           {permissions.can_view_recommendations === false ? (
