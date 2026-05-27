@@ -11,6 +11,7 @@ import {
   Empty,
   message,
   Badge,
+  Divider,
 } from "antd";
 import {
   ThunderboltOutlined,
@@ -33,6 +34,8 @@ import {
   type AlphaAlert,
   type AlphaPerformance,
 } from "@/lib/api";
+import { BuyStockModal } from "./BuyStockModal";
+
 
 // ── Cap segment badge colors ────────────────────────────────────────────
 const CAP_COLORS: Record<string, { bg: string; text: string; border: string }> =
@@ -368,124 +371,159 @@ function AlertCard({ alert }: { alert: AlphaAlert }) {
   const cap = CAP_COLORS[alert.cap_segment] || CAP_COLORS.unknown;
   const confidencePct = Math.round(alert.confidence * 100);
 
+  const [modalOpen, setModalOpen] = useState(false);
+  const [userId, setUserId] = useState<string>("test-trader-1");
+
+  useEffect(() => {
+    const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
+    if (storedId) {
+      setUserId(storedId);
+    }
+  }, []);
+
   const rewardRisk = alert.stop_pct > 0
     ? (alert.target_pct / alert.stop_pct).toFixed(1)
     : "∞";
 
   return (
-    <div
-      className="group relative overflow-hidden rounded-xl border border-slate-700/60 bg-gradient-to-br from-slate-900 via-slate-800/80 to-slate-900 transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10"
-      style={{ animationDelay: `${Math.random() * 200}ms` }}
-    >
-      {/* Pulsing glow effect */}
-      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-500/10 blur-2xl transition-opacity group-hover:opacity-70 opacity-30" />
+    <>
+      <div
+        className="group relative overflow-hidden rounded-xl border border-slate-700/60 bg-gradient-to-br from-slate-900 via-slate-800/80 to-slate-900 transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10"
+        style={{ animationDelay: `${Math.random() * 200}ms` }}
+      >
+        {/* Pulsing glow effect */}
+        <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-500/10 blur-2xl transition-opacity group-hover:opacity-70 opacity-30" />
 
-      <div className="relative p-4">
-        {/* Header */}
-        <div className="mb-3 flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/50">
-                <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-75" />
-              </span>
-              <ThunderboltOutlined className="text-xl text-amber-400" />
-            </div>
-            <div>
-              <h3 className="text-base font-black tracking-tight text-white">
-                {alert.display_symbol}
-              </h3>
-              <p className="text-[10px] text-slate-500 truncate max-w-[140px]">
-                {alert.name}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Tag
-              className="!m-0 !border !rounded-md !text-[10px] !font-bold !px-2 !py-0"
-              style={{
-                backgroundColor: cap.bg,
-                color: cap.text,
-                borderColor: cap.border,
-              }}
-            >
-              {(alert.cap_segment || "?").toUpperCase()}
-            </Tag>
-            <Tag className="!m-0 !border-slate-700 !bg-slate-800 !rounded-md !text-[10px] !text-slate-400 !px-2 !py-0">
-              {alert.sector}
-            </Tag>
-          </div>
-        </div>
-
-        {/* Price Grid */}
-        <div className="mb-3 grid grid-cols-3 gap-2">
-          <PriceCell
-            label="Entry"
-            value={`₹${alert.entry_price.toLocaleString("en-IN")}`}
-            color="#60A5FA"
-          />
-          <PriceCell
-            label={`Target (+${alert.target_pct}%)`}
-            value={`₹${alert.target_price.toLocaleString("en-IN")}`}
-            color="#10B981"
-          />
-          <PriceCell
-            label={`Stop (-${alert.stop_pct}%)`}
-            value={`₹${alert.stop_loss.toLocaleString("en-IN")}`}
-            color="#EF4444"
-          />
-        </div>
-
-        {/* Signals Row */}
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {alert.macd_crossover && (
-            <SignalBadge label="MACD Cross" color="emerald" />
-          )}
-          {alert.volume_spike && (
-            <SignalBadge label="Vol Spike" color="blue" />
-          )}
-          {alert.vwap && alert.entry_price > alert.vwap && (
-            <SignalBadge label="Above VWAP" color="purple" />
-          )}
-          {alert.rsi && (
-            <SignalBadge
-              label={`RSI ${alert.rsi}`}
-              color={alert.rsi <= 55 ? "amber" : "sky"}
-            />
-          )}
-        </div>
-
-        {/* Confidence & Score Bar */}
-        <div className="flex items-center gap-3">
-          <Tooltip title={`Composite: ${alert.composite_score}/100`}>
-            <div className="flex-1">
-              <div className="mb-1 flex items-center justify-between text-[10px]">
-                <span className="font-bold text-slate-500">Confidence</span>
-                <span className="font-black text-amber-400">
-                  {confidencePct}%
+        <div className="relative p-4">
+          {/* Header */}
+          <div className="mb-3 flex items-start justify-between">
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/50">
+                  <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-75" />
                 </span>
+                <ThunderboltOutlined className="text-xl text-amber-400" />
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full rounded-full transition-all duration-700"
-                  style={{
-                    width: `${confidencePct}%`,
-                    background: `linear-gradient(90deg, #F59E0B, ${
-                      confidencePct >= 80 ? "#10B981" : "#F59E0B"
-                    })`,
-                  }}
-                />
+              <div>
+                <h3 className="text-base font-black tracking-tight text-white">
+                  {alert.display_symbol}
+                </h3>
+                <p className="text-[10px] text-slate-500 truncate max-w-[140px]">
+                  {alert.name}
+                </p>
               </div>
             </div>
-          </Tooltip>
-          <div className="flex items-center gap-1 rounded-md border border-slate-700/50 bg-slate-800/60 px-2 py-1">
-            <AimOutlined className="text-[10px] text-slate-500" />
-            <span className="text-[10px] font-bold text-slate-400">
-              R:R {rewardRisk}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <Tag
+                className="!m-0 !border !rounded-md !text-[10px] !font-bold !px-2 !py-0"
+                style={{
+                  backgroundColor: cap.bg,
+                  color: cap.text,
+                  borderColor: cap.border,
+                }}
+              >
+                {(alert.cap_segment || "?").toUpperCase()}
+              </Tag>
+              <Tag className="!m-0 !border-slate-700 !bg-slate-800 !rounded-md !text-[10px] !text-slate-400 !px-2 !py-0">
+                {alert.sector}
+              </Tag>
+            </div>
+          </div>
+
+          {/* Price Grid */}
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            <PriceCell
+              label="Entry"
+              value={`₹${alert.entry_price.toLocaleString("en-IN")}`}
+              color="#60A5FA"
+            />
+            <PriceCell
+              label={`Target (+${alert.target_pct}%)`}
+              value={`₹${alert.target_price.toLocaleString("en-IN")}`}
+              color="#10B981"
+            />
+            <PriceCell
+              label={`Stop (-${alert.stop_pct}%)`}
+              value={`₹${alert.stop_loss.toLocaleString("en-IN")}`}
+              color="#EF4444"
+            />
+          </div>
+
+          {/* Signals Row */}
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {alert.macd_crossover && (
+              <SignalBadge label="MACD Cross" color="emerald" />
+            )}
+            {alert.volume_spike && (
+              <SignalBadge label="Vol Spike" color="blue" />
+            )}
+            {alert.vwap && alert.entry_price > alert.vwap && (
+              <SignalBadge label="Above VWAP" color="purple" />
+            )}
+            {alert.rsi && (
+              <SignalBadge
+                label={`RSI ${alert.rsi}`}
+                color={alert.rsi <= 55 ? "amber" : "sky"}
+              />
+            )}
+          </div>
+
+          {/* Confidence & Score Bar */}
+          <div className="mb-3">
+            <Tooltip title={`Composite: ${alert.composite_score}/100`}>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px]">
+                  <span className="font-bold text-slate-500">Confidence</span>
+                  <span className="font-black text-amber-400">
+                    {confidencePct}%
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${confidencePct}%`,
+                      background: `linear-gradient(90deg, #F59E0B, ${
+                        confidencePct >= 80 ? "#10B981" : "#F59E0B"
+                      })`,
+                    }}
+                  />
+                </div>
+              </div>
+            </Tooltip>
+          </div>
+
+          {/* Footer Actions */}
+          <Divider className="!my-2.5 !border-slate-800" />
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => setModalOpen(true)}
+              className="px-3.5 py-1.5 bg-amber-500/10 text-amber-400 rounded-md border border-amber-500/25 hover:bg-amber-500 hover:text-black font-extrabold text-[10px] uppercase transition-all duration-300 flex items-center gap-1 cursor-pointer"
+            >
+              🛒 Buy Stock
+            </button>
+            <div className="flex items-center gap-1 rounded-md border border-slate-700/50 bg-slate-800/60 px-2 py-0.5">
+              <AimOutlined className="text-[10px] text-slate-500" />
+              <span className="text-[10px] font-bold text-slate-400">
+                R:R {rewardRisk}
+              </span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      <BuyStockModal
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onSuccess={() => setModalOpen(false)}
+        symbol={alert.symbol}
+        displaySymbol={alert.display_symbol}
+        defaultPrice={alert.entry_price}
+        defaultTarget={alert.target_price}
+        defaultStopLoss={alert.stop_loss}
+        userId={userId}
+      />
+    </>
   );
 }
 

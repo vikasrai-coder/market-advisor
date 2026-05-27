@@ -1,9 +1,37 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import type { Recommendation } from "@/lib/api";
+import { type Recommendation, getStockDetail } from "@/lib/api";
+import { BuyStockModal } from "./BuyStockModal";
 
 export function RecommendationCard({ rec }: { rec: Recommendation }) {
   const stock = rec.stocks;
   const mode = rec.trade_mode || "swing";
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [livePrice, setLivePrice] = useState<number>(0);
+  const [userId, setUserId] = useState<string>("test-trader-1");
+
+  useEffect(() => {
+    const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
+    if (storedId) {
+      setUserId(storedId);
+    }
+  }, []);
+
+  const handleOpenBuy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setModalOpen(true);
+    try {
+      const detail = await getStockDetail(rec.symbol);
+      const price = (detail.metrics?.[0]?.price as number) || (detail.stock?.fiftyTwoWeekLow as number) || 100.0;
+      setLivePrice(price);
+    } catch (err) {
+      setLivePrice(100.0);
+    }
+  };
 
   // Accent styles per mode
   const getAccentStyles = () => {
@@ -39,118 +67,142 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
   const style = getAccentStyles();
 
   return (
-    <Link
-      href={`/stocks/${rec.symbol}`}
-      className={`group block rounded-xl border border-slate-700/80 bg-slate-900/60 p-5 transition ${style.borderHover}`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${style.badgeBg}`}>
-            #{rec.rank} {mode === "intraday" ? "⚡ Intraday" : mode === "longterm" ? "🏦 Long-term" : mode === "future" ? "📅 Future Setup" : "📈 Swing BUY"}
-          </span>
-          {rec.cap_segment && (
-            <span className="ml-1.5 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 capitalize">
-              {rec.cap_segment}
+    <>
+      <Link
+        href={`/stocks/${rec.symbol}`}
+        className={`group block rounded-xl border border-slate-700/80 bg-slate-900/60 p-5 transition ${style.borderHover}`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${style.badgeBg}`}>
+              #{rec.rank} {mode === "intraday" ? "⚡ Intraday" : mode === "longterm" ? "🏦 Long-term" : mode === "future" ? "📅 Future Setup" : "📈 Swing BUY"}
             </span>
-          )}
-          {rec.stocks?.is_undervalued && (
-            <span className="ml-1.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide uppercase shadow-[0_0_8px_rgba(245,158,11,0.15)]">
-              🔥 Under Valued
-            </span>
-          )}
-          <h3 className="mt-2.5 text-xl font-bold text-white">
-            {rec.symbol.replace(".NS", "").replace(".BO", "")}
-          </h3>
-          <p className="text-sm text-slate-400">
-            {stock?.name ?? rec.symbol}
-            <span className="ml-1 text-slate-600">· NSE</span>
-          </p>
-        </div>
-        <div className="text-right">
-          <p className={`text-2xl font-black tracking-tight ${style.text}`}>{rec.composite_score}</p>
-          <p className="text-xs text-slate-500 font-medium">composite</p>
-        </div>
-      </div>
-
-      <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-slate-300">{rec.reasoning}</p>
-
-      {/* Mode-specific metrics */}
-      {mode === "intraday" && rec.vwap && (
-        <div className="mt-3 flex flex-wrap gap-2 text-xs border-t border-slate-800/55 pt-3">
-          <span className="rounded bg-sky-950/20 px-2 py-1 text-sky-300">
-            VWAP: <strong className="text-white">₹{rec.vwap.toFixed(2)}</strong>
-          </span>
-          {rec.bullish_crossover && (
-            <span className="rounded bg-emerald-950/30 px-2 py-1 text-emerald-300 font-medium border border-emerald-500/10">
-              MACD Crossover
-            </span>
-          )}
-        </div>
-      )}
-
-      {mode === "longterm" && (
-        <div className="mt-3 space-y-2.5 border-t border-slate-800/55 pt-3">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {rec.pe_ratio && (
-              <span className="rounded bg-purple-950/25 px-2 py-1 text-purple-300">
-                P/E: <strong className="text-white">{rec.pe_ratio.toFixed(1)}</strong>
+            {rec.cap_segment && (
+              <span className="ml-1.5 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 capitalize">
+                {rec.cap_segment}
               </span>
             )}
-            {rec.dividend_yield !== undefined && (
-              <span className="rounded bg-purple-950/25 px-2 py-1 text-purple-300">
-                Yield: <strong className="text-white">{(rec.dividend_yield * 100).toFixed(2)}%</strong>
+            {rec.stocks?.is_undervalued && (
+              <span className="ml-1.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide uppercase shadow-[0_0_8px_rgba(245,158,11,0.15)]">
+                🔥 Under Valued
               </span>
             )}
-            {rec.golden_cross && (
-              <span className="rounded bg-amber-950/30 px-2 py-1 text-amber-300 font-bold border border-amber-500/10">
-                ✨ Golden Cross
+            <h3 className="mt-2.5 text-xl font-bold text-white">
+              {rec.symbol.replace(".NS", "").replace(".BO", "")}
+            </h3>
+            <p className="text-sm text-slate-400">
+              {stock?.name ?? rec.symbol}
+              <span className="ml-1 text-slate-600">· NSE</span>
+            </p>
+          </div>
+          <div className="text-right">
+            <p className={`text-2xl font-black tracking-tight ${style.text}`}>{rec.composite_score}</p>
+            <p className="text-xs text-slate-500 font-medium">composite</p>
+          </div>
+        </div>
+
+        <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-slate-300">{rec.reasoning}</p>
+
+        {/* Mode-specific metrics */}
+        {mode === "intraday" && rec.vwap && (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs border-t border-slate-800/55 pt-3">
+            <span className="rounded bg-sky-950/20 px-2 py-1 text-sky-300">
+              VWAP: <strong className="text-white">₹{rec.vwap.toFixed(2)}</strong>
+            </span>
+            {rec.bullish_crossover && (
+              <span className="rounded bg-emerald-950/30 px-2 py-1 text-emerald-300 font-medium border border-emerald-500/10">
+                MACD Crossover
               </span>
             )}
           </div>
-          
-          {rec.range_52w_pct !== undefined && (
-            <div className="space-y-1">
-              <div className="flex justify-between text-xxs text-slate-500">
-                <span>52W Low</span>
-                <span className="font-semibold text-slate-400">Position: {rec.range_52w_pct.toFixed(0)}%</span>
-                <span>52W High</span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500"
-                  style={{ width: `${rec.range_52w_pct}%` }}
-                />
-              </div>
+        )}
+
+        {mode === "longterm" && (
+          <div className="mt-3 space-y-2.5 border-t border-slate-800/55 pt-3">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {rec.pe_ratio && (
+                <span className="rounded bg-purple-950/25 px-2 py-1 text-purple-300">
+                  P/E: <strong className="text-white">{rec.pe_ratio.toFixed(1)}</strong>
+                </span>
+              )}
+              {rec.dividend_yield !== undefined && (
+                <span className="rounded bg-purple-950/25 px-2 py-1 text-purple-300">
+                  Yield: <strong className="text-white">{(rec.dividend_yield * 100).toFixed(2)}%</strong>
+                </span>
+              )}
+              {rec.golden_cross && (
+                <span className="rounded bg-amber-950/30 px-2 py-1 text-amber-300 font-bold border border-amber-500/10">
+                  ✨ Golden Cross
+                </span>
+              )}
             </div>
+            
+            {rec.range_52w_pct !== undefined && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-xxs text-slate-500">
+                  <span>52W Low</span>
+                  <span className="font-semibold text-slate-400">Position: {rec.range_52w_pct.toFixed(0)}%</span>
+                  <span>52W High</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500"
+                    style={{ width: `${rec.range_52w_pct}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+          <ScorePill label="Trend" value={rec.trend_score} />
+          <ScorePill label="Technical" value={rec.technical_score} />
+          {mode === "longterm" && rec.fundamental_score ? (
+            <ScorePill label="Fundamental" value={rec.fundamental_score} />
+          ) : (
+            <ScorePill label="News" value={rec.news_score} />
           )}
         </div>
-      )}
 
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-        <ScorePill label="Trend" value={rec.trend_score} />
-        <ScorePill label="Technical" value={rec.technical_score} />
-        {mode === "longterm" && rec.fundamental_score ? (
-          <ScorePill label="Fundamental" value={rec.fundamental_score} />
-        ) : (
-          <ScorePill label="News" value={rec.news_score} />
+        {rec.key_factors?.length > 0 && (
+          <ul className="mt-3.5 flex flex-wrap gap-1.5">
+            {rec.key_factors.slice(0, 3).map((f, i) => (
+              <li key={`${rec.symbol}-factor-${i}`} className="rounded-full bg-slate-800/70 px-2 py-0.5 text-xxs text-slate-400">
+                {f}
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
 
-      {rec.key_factors?.length > 0 && (
-        <ul className="mt-3.5 flex flex-wrap gap-1.5">
-          {rec.key_factors.slice(0, 3).map((f, i) => (
-            <li key={`${rec.symbol}-factor-${i}`} className="rounded-full bg-slate-800/70 px-2 py-0.5 text-xxs text-slate-400">
-              {f}
-            </li>
-          ))}
-        </ul>
-      )}
+        {/* Footer actions */}
+        <div className="mt-3.5 flex items-center justify-between border-t border-slate-800/40 pt-2.5">
+          <button
+            onClick={handleOpenBuy}
+            className="px-3.5 py-1.5 bg-emerald-500/10 text-emerald-400 rounded-md border border-emerald-500/25 hover:bg-emerald-500 hover:text-black font-extrabold text-[10px] uppercase transition-all duration-300 flex items-center gap-1 cursor-pointer"
+          >
+            🛒 Buy Stock
+          </button>
+          <span className="text-xxs text-slate-500 flex items-center gap-1.5">
+            <span>Target: <span className="font-medium text-slate-400">{rec.trade_date}</span></span>
+            <span>·</span>
+            <span>AI Conf: <strong className="text-slate-300 font-semibold">{(rec.ai_confidence * 100).toFixed(0)}%</strong></span>
+          </span>
+        </div>
+      </Link>
 
-      <p className="mt-3.5 text-xs text-slate-500 flex items-center justify-between border-t border-slate-800/40 pt-2.5">
-        <span>Target: <span className="font-medium text-slate-400">{rec.trade_date}</span></span>
-        <span>AI Confidence: <strong className="text-slate-300 font-semibold">{(rec.ai_confidence * 100).toFixed(0)}%</strong></span>
-      </p>
-    </Link>
+      <BuyStockModal
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onSuccess={() => setModalOpen(false)}
+        symbol={rec.symbol}
+        displaySymbol={rec.symbol.replace(".NS", "").replace(".BO", "")}
+        defaultPrice={livePrice || 100.0}
+        defaultTarget={livePrice ? Math.round(livePrice * 1.10 * 100) / 100 : null}
+        defaultStopLoss={livePrice ? Math.round(livePrice * 0.97 * 100) / 100 : null}
+        userId={userId}
+      />
+    </>
   );
 }
 

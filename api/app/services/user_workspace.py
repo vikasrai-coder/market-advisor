@@ -222,6 +222,9 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
         sym = item.get("symbol")
         qty = float(item.get("shares_quantity") or 0.0)
         buy_price = float(item.get("buy_price") or 0.0)
+        target_price = float(item.get("target_price") or 0.0) if item.get("target_price") else None
+        stop_loss = float(item.get("stop_loss") or 0.0) if item.get("stop_loss") else None
+
         if not sym or qty <= 0:
             continue
 
@@ -246,6 +249,8 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
                 "shares_quantity": qty,
                 "buy_price": buy_price,
                 "current_price": current_price,
+                "target_price": target_price,
+                "stop_loss": stop_loss,
                 "investment": investment,
                 "current_value": current_value,
                 "profit_loss": profit_loss,
@@ -260,6 +265,8 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
                 "shares_quantity": qty,
                 "buy_price": buy_price,
                 "current_price": buy_price,
+                "target_price": target_price,
+                "stop_loss": stop_loss,
                 "investment": investment,
                 "current_value": investment,
                 "profit_loss": 0.0,
@@ -280,7 +287,14 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
     }
 
 
-def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: float) -> bool:
+def add_to_portfolio(
+    user_id: str,
+    symbol: str,
+    quantity: float,
+    buy_price: float,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None
+) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
 
@@ -304,6 +318,8 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
                 client.table("user_portfolios").update({
                     "shares_quantity": new_qty,
                     "buy_price": new_price,
+                    "target_price": target_price if target_price else existing.data.get("target_price"),
+                    "stop_loss": stop_loss if stop_loss else existing.data.get("stop_loss"),
                 }).eq("id", existing.data["id"]).execute()
             else:
                 client.table("user_portfolios").insert({
@@ -311,6 +327,8 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
                     "symbol": norm_sym,
                     "shares_quantity": quantity,
                     "buy_price": buy_price,
+                    "target_price": target_price,
+                    "stop_loss": stop_loss,
                 }).execute()
             return True
         except Exception as exc:
@@ -318,6 +336,8 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
 
     # Local cache fallback
     cache = _read_local_cache()
+    if "user_portfolios" not in cache:
+        cache["user_portfolios"] = {}
     if user_id not in cache["user_portfolios"]:
         cache["user_portfolios"][user_id] = []
 
@@ -330,6 +350,10 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
             new_price = round(((old_qty * old_price) + (quantity * buy_price)) / new_qty, 2)
             item["shares_quantity"] = new_qty
             item["buy_price"] = new_price
+            if target_price:
+                item["target_price"] = target_price
+            if stop_loss:
+                item["stop_loss"] = stop_loss
             found = True
             break
 
@@ -338,44 +362,223 @@ def add_to_portfolio(user_id: str, symbol: str, quantity: float, buy_price: floa
             "symbol": norm_sym,
             "shares_quantity": quantity,
             "buy_price": buy_price,
+            "target_price": target_price,
+            "stop_loss": stop_loss,
         })
 
     _write_local_cache(cache)
     return True
 
 
-def sell_from_portfolio(user_id: str, symbol: str, quantity: float) -> bool:
+def sell_from_portfolio(
+    user_id: str,
+    symbol: str,
+    quantity: float,
+    sell_price: Optional[float] = None,
+    execution_type: str = "manual"
+) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
 
     use_supabase = client and _is_valid_uuid(user_id)
+    
+    # 1. Resolve actual sell price
+    actual_sell_price = 0.0
+    if sell_price is not None:
+        actual_sell_price = sell_price
+    else:
+        try:
+            ticker = yf.Ticker(norm_sym)
+            history = ticker.history(period="1d")
+            actual_sell_price = float(history["Close"].iloc[-1]) if not history.empty else 0.0
+        except Exception:
+            actual_sell_price = 0.0
 
+    buy_price = 0.0
+    shares_sold = 0.0
+    holding_resolved = False
+
+    # 2. Retrieve existing holding detail
     if use_supabase:
         try:
             existing = client.table("user_portfolios").select("*").eq("user_id", user_id).eq("symbol", norm_sym).maybe_single().execute()
             if existing and existing.data:
+                buy_price = float(existing.data["buy_price"])
                 old_qty = float(existing.data["shares_quantity"])
-                if quantity >= old_qty:
+                shares_sold = min(quantity, old_qty)
+                
+                # Perform the active holdings subtraction / deletion
+                if shares_sold >= old_qty:
                     client.table("user_portfolios").delete().eq("id", existing.data["id"]).execute()
                 else:
-                    new_qty = old_qty - quantity
                     client.table("user_portfolios").update({
-                        "shares_quantity": new_qty,
+                        "shares_quantity": old_qty - shares_sold,
                     }).eq("id", existing.data["id"]).execute()
-                return True
+                holding_resolved = True
         except Exception as exc:
-            logger.error(f"Failed to sell portfolio holding on Supabase: {exc}")
+            logger.error(f"Failed to fetch/delete portfolio holding on Supabase: {exc}")
 
-    # Local cache fallback
+    if not holding_resolved:
+        # Resolve via local cache fallback
+        cache = _read_local_cache()
+        if user_id in cache["user_portfolios"]:
+            for item in list(cache["user_portfolios"][user_id]):
+                if item["symbol"] == norm_sym:
+                    buy_price = float(item["buy_price"])
+                    old_qty = float(item["shares_quantity"])
+                    shares_sold = min(quantity, old_qty)
+                    
+                    if shares_sold >= old_qty:
+                        cache["user_portfolios"][user_id].remove(item)
+                    else:
+                        item["shares_quantity"] = old_qty - shares_sold
+                    _write_local_cache(cache)
+                    holding_resolved = True
+                    break
+
+    if not holding_resolved or shares_sold <= 0:
+        return False
+
+    # 3. Calculate profit/loss
+    investment = shares_sold * buy_price
+    realized_value = shares_sold * actual_sell_price
+    profit_loss = round(realized_value - investment, 2)
+    profit_loss_pct = round(((actual_sell_price - buy_price) / buy_price * 100), 2) if buy_price > 0 else 0.0
+
+    # 4. Insert into Passbook (History)
+    if use_supabase:
+        try:
+            client.table("user_passbook").insert({
+                "user_id": user_id,
+                "symbol": norm_sym,
+                "shares_quantity": shares_sold,
+                "buy_price": buy_price,
+                "sell_price": actual_sell_price,
+                "profit_loss": profit_loss,
+                "profit_loss_pct": profit_loss_pct,
+                "execution_type": execution_type,
+            }).execute()
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to record completed trade on Supabase passbook: {exc}")
+
+    # Local cache fallback for Passbook
     cache = _read_local_cache()
-    if user_id in cache["user_portfolios"]:
-        for item in list(cache["user_portfolios"][user_id]):
-            if item["symbol"] == norm_sym:
-                old_qty = float(item["shares_quantity"])
-                if quantity >= old_qty:
-                    cache["user_portfolios"][user_id].remove(item)
-                else:
-                    item["shares_quantity"] = old_qty - quantity
-                _write_local_cache(cache)
-                break
+    if "user_passbook" not in cache:
+        cache["user_passbook"] = {}
+    if user_id not in cache["user_passbook"]:
+        cache["user_passbook"][user_id] = []
+
+    import datetime
+    cache["user_passbook"][user_id].append({
+        "symbol": norm_sym,
+        "shares_quantity": shares_sold,
+        "buy_price": buy_price,
+        "sell_price": actual_sell_price,
+        "profit_loss": profit_loss,
+        "profit_loss_pct": profit_loss_pct,
+        "execution_type": execution_type,
+        "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+    })
+    _write_local_cache(cache)
     return True
+
+
+def get_user_passbook(user_id: str) -> List[Dict[str, Any]]:
+    client = get_client()
+    use_supabase = client and _is_valid_uuid(user_id)
+    records = []
+
+    if use_supabase:
+        try:
+            res = client.table("user_passbook").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+            records = res.data
+        except Exception as exc:
+            logger.error(f"Failed to fetch user passbook from Supabase: {exc}")
+            cache = _read_local_cache()
+            records = cache.get("user_passbook", {}).get(user_id, [])
+    else:
+        cache = _read_local_cache()
+        records = cache.get("user_passbook", {}).get(user_id, [])
+
+    # Format output items cleanly
+    formatted = []
+    for item in records:
+        sym = item.get("symbol")
+        formatted.append({
+            "id": item.get("id"),
+            "symbol": sym,
+            "display_symbol": display_symbol(sym) if sym else "",
+            "shares_quantity": float(item.get("shares_quantity") or 0.0),
+            "buy_price": float(item.get("buy_price") or 0.0),
+            "sell_price": float(item.get("sell_price") or 0.0),
+            "profit_loss": float(item.get("profit_loss") or 0.0),
+            "profit_loss_pct": float(item.get("profit_loss_pct") or 0.0),
+            "execution_type": item.get("execution_type", "manual"),
+            "created_at": item.get("created_at"),
+        })
+    # Sort locally if retrieved from fallback cache
+    if not use_supabase:
+        formatted.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return formatted
+
+
+def reconcile_active_triggers(user_id: str) -> Dict[str, Any]:
+    """Fetch live stock prices and automatically execute active stop-loss/target triggers."""
+    portfolio = get_user_portfolio(user_id)
+    holdings = portfolio.get("holdings", [])
+    triggered = []
+
+    for item in holdings:
+        sym = item["symbol"]
+        qty = item["shares_quantity"]
+        current_price = item["current_price"]
+        target_price = item.get("target_price")
+        stop_loss = item.get("stop_loss")
+
+        # Check Target trigger
+        if target_price and target_price > 0 and current_price >= target_price:
+            success = sell_from_portfolio(
+                user_id=user_id,
+                symbol=sym,
+                quantity=qty,
+                sell_price=target_price,
+                execution_type="target_trigger"
+            )
+            if success:
+                triggered.append({
+                    "symbol": sym,
+                    "display_symbol": item["display_symbol"],
+                    "qty": qty,
+                    "type": "target_trigger",
+                    "trigger_price": target_price,
+                    "profit_loss": round((target_price - item["buy_price"]) * qty, 2),
+                })
+            continue
+
+        # Check Stop Loss trigger
+        if stop_loss and stop_loss > 0 and current_price <= stop_loss:
+            success = sell_from_portfolio(
+                user_id=user_id,
+                symbol=sym,
+                quantity=qty,
+                sell_price=stop_loss,
+                execution_type="stop_loss_trigger"
+            )
+            if success:
+                triggered.append({
+                    "symbol": sym,
+                    "display_symbol": item["display_symbol"],
+                    "qty": qty,
+                    "type": "stop_loss_trigger",
+                    "trigger_price": stop_loss,
+                    "profit_loss": round((stop_loss - item["buy_price"]) * qty, 2),
+                })
+
+    return {
+        "success": True,
+        "reconciled_count": len(holdings),
+        "triggered_count": len(triggered),
+        "triggered": triggered,
+    }
+

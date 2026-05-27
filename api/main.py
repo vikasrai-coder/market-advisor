@@ -112,12 +112,16 @@ class PortfolioBuyRequest(BaseModel):
     symbol: str
     quantity: float
     buy_price: float
+    target_price: float | None = None
+    stop_loss: float | None = None
 
 
 class PortfolioSellRequest(BaseModel):
     user_id: str
     symbol: str
     quantity: float
+    sell_price: float | None = None
+
 
 
 class LoginRequest(BaseModel):
@@ -927,7 +931,14 @@ def get_portfolio_endpoint(user_id: str):
 def buy_holding_endpoint(req: PortfolioBuyRequest):
     try:
         from app.services.user_workspace import add_to_portfolio
-        success = add_to_portfolio(req.user_id, req.symbol, req.quantity, req.buy_price)
+        success = add_to_portfolio(
+            req.user_id,
+            req.symbol,
+            req.quantity,
+            req.buy_price,
+            req.target_price,
+            req.stop_loss
+        )
         return {"success": success}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -937,10 +948,35 @@ def buy_holding_endpoint(req: PortfolioBuyRequest):
 def sell_holding_endpoint(req: PortfolioSellRequest):
     try:
         from app.services.user_workspace import sell_from_portfolio
-        success = sell_from_portfolio(req.user_id, req.symbol, req.quantity)
+        success = sell_from_portfolio(
+            req.user_id,
+            req.symbol,
+            req.quantity,
+            req.sell_price,
+            "manual"
+        )
         return {"success": success}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/user/passbook")
+def get_passbook_endpoint(user_id: str):
+    try:
+        from app.services.user_workspace import get_user_passbook
+        return {"passbook": get_user_passbook(user_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/portfolio/reconcile")
+def reconcile_portfolio_endpoint(user_id: str):
+    try:
+        from app.services.user_workspace import reconcile_active_triggers
+        return reconcile_active_triggers(user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 
 

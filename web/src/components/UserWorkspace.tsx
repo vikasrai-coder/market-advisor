@@ -7,8 +7,11 @@ import {
   buyHolding,
   sellHolding,
   syncWatchlist,
+  getUserPassbook,
+  reconcilePortfolioTriggers,
   UserWatchlistItem,
   UserPortfolioResponse,
+  PassbookItem,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 
@@ -51,6 +54,8 @@ export default function UserWorkspace({
   const [sessionUserId, setSessionUserId] = useState<string>("");
   const [watchlist, setWatchlist] = useState<UserWatchlistItem[]>([]);
   const [portfolio, setPortfolio] = useState<UserPortfolioResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<"holdings" | "passbook">("holdings");
+  const [passbook, setPassbook] = useState<PassbookItem[]>([]);
   
   // Watchlist Input
   const [newSymbol, setNewSymbol] = useState<string>("");
@@ -89,12 +94,21 @@ export default function UserWorkspace({
 
   const loadData = useCallback(async () => {
     try {
-      const [watchData, portData] = await Promise.all([
+      // Auto-reconcile portfolio triggers on load
+      try {
+        await reconcilePortfolioTriggers(effectiveUserId);
+      } catch (recErr) {
+        console.error("Auto-reconcile triggers failed:", recErr);
+      }
+
+      const [watchData, portData, passbookData] = await Promise.all([
         getUserWatchlist(effectiveUserId),
         getUserPortfolio(effectiveUserId),
+        getUserPassbook(effectiveUserId),
       ]);
       setWatchlist(watchData.watchlist ?? []);
       setPortfolio(portData);
+      setPassbook(passbookData.passbook ?? []);
       setApiConnected(true);
     } catch (err) {
       setApiConnected(false);
@@ -397,136 +411,241 @@ export default function UserWorkspace({
             </div>
           </div>
 
-          {/* Holdings table */}
-          <div className="border border-slate-900 rounded-2xl overflow-hidden mb-6 bg-slate-900/5 shadow-inner max-h-[300px] overflow-y-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-900 text-slate-500 text-[10px] uppercase tracking-wider bg-slate-900/25">
-                  <th className="py-3 px-4 font-bold">Stock</th>
-                  <th className="py-3 px-4 font-bold text-right">Shares</th>
-                  <th className="py-3 px-4 font-bold text-right">Buy Price</th>
-                  <th className="py-3 px-4 font-bold text-right">Current Price</th>
-                  <th className="py-3 px-4 font-bold text-right">Profit / Loss</th>
-                  <th className="py-3 px-4 font-bold">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-900/40 text-slate-300 text-xs">
-                {!portfolio?.holdings || portfolio.holdings.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-10 text-slate-500">
-                      No active holdings. Record buy transactions below to begin tracking.
-                    </td>
+          {/* Tab Selection */}
+          <div className="flex gap-2 mb-6 border-b border-slate-900 pb-2">
+            <button
+              onClick={() => setActiveTab("holdings")}
+              className={`pb-2 px-4 text-xs font-black uppercase tracking-wider transition-all relative cursor-pointer ${
+                activeTab === "holdings"
+                  ? "text-emerald-400 border-b-2 border-emerald-500"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              📦 Active Holdings ({portfolio?.holdings?.length ?? 0})
+            </button>
+            <button
+              onClick={() => setActiveTab("passbook")}
+              className={`pb-2 px-4 text-xs font-black uppercase tracking-wider transition-all relative cursor-pointer ${
+                activeTab === "passbook"
+                  ? "text-emerald-400 border-b-2 border-emerald-500"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              📖 Transaction Passbook ({passbook.length})
+            </button>
+          </div>
+
+          {activeTab === "holdings" ? (
+            /* Holdings table */
+            <div className="border border-slate-900 rounded-2xl overflow-hidden mb-6 bg-slate-900/5 shadow-inner max-h-[300px] overflow-y-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-900 text-slate-500 text-[10px] uppercase tracking-wider bg-slate-900/25">
+                    <th className="py-3 px-4 font-bold">Stock</th>
+                    <th className="py-3 px-4 font-bold text-right">Shares</th>
+                    <th className="py-3 px-4 font-bold text-right">Buy Price</th>
+                    <th className="py-3 px-4 font-bold text-right">Current Price</th>
+                    <th className="py-3 px-4 font-bold text-right">Target</th>
+                    <th className="py-3 px-4 font-bold text-right">Stop Loss</th>
+                    <th className="py-3 px-4 font-bold text-right">Profit / Loss</th>
+                    <th className="py-3 px-4 font-bold">Action</th>
                   </tr>
-                ) : (
-                  portfolio.holdings.map((hold) => (
-                    <tr key={hold.symbol} className="hover:bg-slate-900/10 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="flex flex-col">
-                          <span className="font-extrabold text-slate-200">{hold.display_symbol}</span>
-                          <span className="text-[9px] text-slate-500 truncate max-w-[120px]">{hold.name}</span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-bold text-slate-300">{hold.shares_quantity}</td>
-                      <td className="py-3.5 px-4 text-right">₹{hold.buy_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                      <td className="py-3.5 px-4 text-right">₹{hold.current_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                      <td className={`py-3.5 px-4 text-right font-black ${hold.profit_loss >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                        <div className="flex flex-col items-end">
-                          <span>₹{hold.profit_loss.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                          <span className="text-[9px]">{hold.profit_loss_pct >= 0 ? "+" : ""}{hold.profit_loss_pct}%</span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex gap-2">
-                          {canUseChatbot ? (
-                            <button
-                              onClick={() => onAnalyzeHolding && onAnalyzeHolding(hold.symbol, hold.shares_quantity, hold.buy_price)}
-                              className="text-purple-400 hover:text-purple-300 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 hover:border-purple-500/45 hover:shadow-[0_0_10px_rgba(168,85,247,0.15)] transition-all cursor-pointer shrink-0"
-                            >
-                              🤖 AI Analyze
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => alert("🔒 Chatbot Advisor is currently locked on your profile. Please ask an admin to enable the Chatbot permission in the Admin Control Center.")}
-                              className="text-slate-500 hover:text-slate-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-900 border border-slate-800 transition-all cursor-pointer shrink-0"
-                            >
-                              🔒 AI Analyze
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
-                            disabled={apiConnected === false}
-                            className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer shrink-0"
-                          >
-                            Sell All
-                          </button>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-900/40 text-slate-300 text-xs">
+                  {!portfolio?.holdings || portfolio.holdings.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-10 text-slate-500">
+                        No active holdings. Record buy transactions below to begin tracking.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : (
+                    portfolio.holdings.map((hold) => (
+                      <tr key={hold.symbol} className="hover:bg-slate-900/10 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-col">
+                            <span className="font-extrabold text-slate-200">{hold.display_symbol}</span>
+                            <span className="text-[9px] text-slate-500 truncate max-w-[120px]">{hold.name}</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-bold text-slate-300">{hold.shares_quantity}</td>
+                        <td className="py-3.5 px-4 text-right">₹{hold.buy_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3.5 px-4 text-right">₹{hold.current_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3.5 px-4 text-right font-medium text-emerald-400">
+                          {hold.target_price ? `₹${hold.target_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-medium text-rose-400">
+                          {hold.stop_loss ? `₹${hold.stop_loss.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}
+                        </td>
+                        <td className={`py-3.5 px-4 text-right font-black ${hold.profit_loss >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          <div className="flex flex-col items-end">
+                            <span>₹{hold.profit_loss.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                            <span className="text-[9px]">{hold.profit_loss_pct >= 0 ? "+" : ""}{hold.profit_loss_pct}%</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex gap-2">
+                            {canUseChatbot ? (
+                              <button
+                                onClick={() => onAnalyzeHolding && onAnalyzeHolding(hold.symbol, hold.shares_quantity, hold.buy_price)}
+                                className="text-purple-400 hover:text-purple-300 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 hover:border-purple-500/45 hover:shadow-[0_0_10px_rgba(168,85,247,0.15)] transition-all cursor-pointer shrink-0"
+                              >
+                                🤖 AI Analyze
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => alert("🔒 Chatbot Advisor is currently locked on your profile. Please ask an admin to enable the Chatbot permission in the Admin Control Center.")}
+                                className="text-slate-500 hover:text-slate-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-900 border border-slate-800 transition-all cursor-pointer shrink-0"
+                              >
+                                🔒 AI Analyze
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
+                              disabled={apiConnected === false}
+                              className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer shrink-0"
+                            >
+                              Sell All
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* Passbook History table */
+            <div className="border border-slate-900 rounded-2xl overflow-hidden mb-6 bg-slate-900/5 shadow-inner max-h-[300px] overflow-y-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-900 text-slate-500 text-[10px] uppercase tracking-wider bg-slate-900/25">
+                    <th className="py-3 px-4 font-bold">Transaction Date</th>
+                    <th className="py-3 px-4 font-bold">Stock</th>
+                    <th className="py-3 px-4 font-bold text-right">Shares</th>
+                    <th className="py-3 px-4 font-bold text-right">Buy Price</th>
+                    <th className="py-3 px-4 font-bold text-right">Sell Price</th>
+                    <th className="py-3 px-4 font-bold text-right">Realized Return</th>
+                    <th className="py-3 px-4 font-bold">Type</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-900/40 text-slate-300 text-xs">
+                  {passbook.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                        No transactions recorded in passbook.
+                      </td>
+                    </tr>
+                  ) : (
+                    passbook.map((item) => (
+                      <tr key={item.id || `${item.symbol}-${item.created_at}`} className="hover:bg-slate-900/10 transition-colors">
+                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[10px]">
+                          {new Date(item.created_at).toLocaleString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-col">
+                            <span className="font-extrabold text-slate-200">{item.display_symbol}</span>
+                            <span className="text-[9px] text-slate-500 uppercase font-bold">{item.symbol}</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-bold text-slate-300">{item.shares_quantity}</td>
+                        <td className="py-3.5 px-4 text-right">₹{item.buy_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3.5 px-4 text-right font-bold text-slate-200">₹{item.sell_price.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className={`py-3.5 px-4 text-right font-black ${item.profit_loss >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          <div className="flex flex-col items-end">
+                            <span>₹{item.profit_loss.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                            <span className="text-[9px]">{item.profit_loss_pct >= 0 ? "+" : ""}{item.profit_loss_pct}%</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${
+                            item.execution_type === "target_trigger"
+                              ? "bg-emerald-950/40 text-emerald-400 border-emerald-500/25"
+                              : item.execution_type === "stop_loss_trigger"
+                              ? "bg-rose-950/40 text-rose-400 border-rose-500/25"
+                              : "bg-slate-900/60 text-slate-400 border-slate-700/40"
+                          }`}>
+                            {item.execution_type === "target_trigger"
+                              ? "🎯 Target Hit"
+                              : item.execution_type === "stop_loss_trigger"
+                              ? "🛡️ Stop Loss"
+                              : "Manual"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Add trade holdings transaction */}
-        <div className="border-t border-slate-900 pt-6">
-          <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-            📥 Add Holdings Transaction
-          </h4>
-          <form onSubmit={handleBuyHolding} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Symbol</label>
-              <input
-                type="text"
-                placeholder="e.g. TATAMOTORS.NS"
-                required
-                value={buySymbol}
-                onChange={(e) => setBuySymbol(e.target.value)}
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-              />
-            </div>
-            
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Shares Quantity</label>
-              <input
-                type="number"
-                min="0.01"
-                step="any"
-                placeholder="Shares"
-                required
-                value={buyQty || ""}
-                onChange={(e) => setBuyQty(parseFloat(e.target.value) || 0)}
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-              />
-            </div>
+        {activeTab === "holdings" && (
+          <div className="border-t border-slate-900 pt-6">
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+              📥 Add Holdings Transaction
+            </h4>
+            <form onSubmit={handleBuyHolding} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Symbol</label>
+                <input
+                  type="text"
+                  placeholder="e.g. TATAMOTORS.NS"
+                  required
+                  value={buySymbol}
+                  onChange={(e) => setBuySymbol(e.target.value)}
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Shares Quantity</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  placeholder="Shares"
+                  required
+                  value={buyQty || ""}
+                  onChange={(e) => setBuyQty(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
+                />
+              </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Purchase Price (₹)</label>
-              <input
-                type="number"
-                min="0.01"
-                step="any"
-                placeholder="Price"
-                required
-                value={buyPriceInput || ""}
-                onChange={(e) => setBuyPriceInput(parseFloat(e.target.value) || 0)}
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-              />
-            </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Purchase Price (₹)</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  placeholder="Price"
+                  required
+                  value={buyPriceInput || ""}
+                  onChange={(e) => setBuyPriceInput(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
+                />
+              </div>
 
-            <button
-              type="submit"
-              disabled={portfolioLoading || apiConnected === false}
-              className="h-[34px] w-full bg-slate-100 hover:bg-white text-slate-900 font-extrabold rounded-xl text-xs flex items-center justify-center transition-all cursor-pointer border border-slate-200 shadow-sm"
-            >
-              Add Shares
-            </button>
-          </form>
-          {portfolioError && (
-            <p className="text-[10px] text-rose-400 mt-2 animate-pulse">{portfolioError}</p>
-          )}
-        </div>
+              <button
+                type="submit"
+                disabled={portfolioLoading || apiConnected === false}
+                className="h-[34px] w-full bg-slate-100 hover:bg-white text-slate-900 font-extrabold rounded-xl text-xs flex items-center justify-center transition-all cursor-pointer border border-slate-200 shadow-sm"
+              >
+                Add Shares
+              </button>
+            </form>
+            {portfolioError && (
+              <p className="text-[10px] text-rose-400 mt-2 animate-pulse">{portfolioError}</p>
+            )}
+          </div>
+        )}
 
       </div>
     </div>

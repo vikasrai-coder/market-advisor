@@ -228,6 +228,8 @@ export type UserPortfolioItem = {
   shares_quantity: number;
   buy_price: number;
   current_price: number;
+  target_price?: number | null;
+  stop_loss?: number | null;
   investment: number;
   current_value: number;
   profit_loss: number;
@@ -242,6 +244,23 @@ export type UserPortfolioResponse = {
     total_profit_loss_pct: number;
   };
   holdings: UserPortfolioItem[];
+};
+
+export type PassbookItem = {
+  id?: string;
+  symbol: string;
+  display_symbol: string;
+  shares_quantity: number;
+  buy_price: number;
+  sell_price: number;
+  profit_loss: number;
+  profit_loss_pct: number;
+  execution_type: "manual" | "target_trigger" | "stop_loss_trigger";
+  created_at: string;
+};
+
+export type PassbookResponse = {
+  passbook: PassbookItem[];
 };
 
 export async function syncWatchlist() {
@@ -276,19 +295,64 @@ export async function getUserPortfolio(userId: string) {
   return fetchJson<UserPortfolioResponse>(`/api/user/portfolio?user_id=${userId}`);
 }
 
-export async function buyHolding(userId: string, symbol: string, quantity: number, buyPrice: number) {
+export async function buyHolding(
+  userId: string,
+  symbol: string,
+  quantity: number,
+  buyPrice: number,
+  targetPrice?: number | null,
+  stopLoss?: number | null
+) {
   return fetchJson<{ success: boolean }>("/api/user/portfolio/buy", {
     method: "POST",
-    body: JSON.stringify({ user_id: userId, symbol, quantity, buy_price: buyPrice }),
+    body: JSON.stringify({
+      user_id: userId,
+      symbol,
+      quantity,
+      buy_price: buyPrice,
+      target_price: targetPrice || null,
+      stop_loss: stopLoss || null,
+    }),
   });
 }
 
-export async function sellHolding(userId: string, symbol: string, quantity: number) {
+export async function sellHolding(
+  userId: string,
+  symbol: string,
+  quantity: number,
+  sellPrice?: number | null
+) {
   return fetchJson<{ success: boolean }>("/api/user/portfolio/sell", {
     method: "POST",
-    body: JSON.stringify({ user_id: userId, symbol, quantity }),
+    body: JSON.stringify({
+      user_id: userId,
+      symbol,
+      quantity,
+      sell_price: sellPrice || null,
+    }),
   });
 }
+
+export async function getUserPassbook(userId: string) {
+  return fetchJson<PassbookResponse>(`/api/user/passbook?user_id=${userId}`);
+}
+
+export async function reconcilePortfolioTriggers(userId: string) {
+  return fetchJson<{
+    success: boolean;
+    reconciled_count: number;
+    triggered_count: number;
+    triggered: {
+      symbol: string;
+      display_symbol: string;
+      qty: number;
+      type: "target_trigger" | "stop_loss_trigger";
+      trigger_price: number;
+      profit_loss: number;
+    }[];
+  }>(`/api/user/portfolio/reconcile?user_id=${userId}`, { method: "POST" });
+}
+
 
 export type UserRoleProfile = {
   id?: string;
