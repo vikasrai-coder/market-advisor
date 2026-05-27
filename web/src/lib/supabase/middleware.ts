@@ -32,8 +32,9 @@ export async function updateSession(request: NextRequest) {
   const isLogin = request.nextUrl.pathname.startsWith("/login");
   const isApi = request.nextUrl.pathname.startsWith("/api");
   const isSignup = request.nextUrl.pathname.startsWith("/signup");
+  const isHealth = request.nextUrl.pathname.startsWith("/health");
 
-  if (!user && !isLogin && !isApi && !isSignup) {
+  if (!user && !isLogin && !isApi && !isSignup && !isHealth) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     return NextResponse.redirect(redirectUrl);
