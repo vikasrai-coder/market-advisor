@@ -68,7 +68,7 @@ echo '{"projectId":"prj_9hDwlYsripR0nrkWsxIYtOaIG2YG","orgId":"team_jPEoNRoA3UXR
   add_env "$ROOT/web" "$k" "$v" < /dev/null
 done < .env.local
 
-add_env "$ROOT/api" "CORS_ORIGINS" "${WEB_URL:-},http://localhost:3000" < /dev/null
+add_env "$ROOT/api" "CORS_ORIGINS" "*" < /dev/null
 
 echo "  Deploying Web to Vercel..."
 tmp_log=$(mktemp)
