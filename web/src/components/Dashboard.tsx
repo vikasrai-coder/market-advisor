@@ -20,6 +20,8 @@ import UserWorkspace from "./UserWorkspace";
 import AdminDashboard from "./AdminDashboard";
 import ChatbotAdvisor from "./ChatbotAdvisor";
 import PennyScans from "./PennyScans";
+import { KPIDashboard } from "./KPIDashboard";
+import { ModuleNavigation } from "./ModuleNavigation";
 import { createClient } from "@/lib/supabase/client";
 
 type PermissionSet = {
@@ -36,12 +38,12 @@ type SessionUser = { id: string; email: string; role: string };
 type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans";
 
 const DEFAULT_PERMISSIONS: PermissionSet = {
-  can_view_charts: true,
-  can_view_recommendations: true,
-  can_view_heatmap: true,
-  can_view_signals: true,
-  can_backtest: true,
-  can_use_portfolio: true,
+  can_view_charts: false,
+  can_view_recommendations: false,
+  can_view_heatmap: false,
+  can_view_signals: false,
+  can_backtest: false,
+  can_use_portfolio: false,
   can_use_chatbot: false,
 };
 
@@ -251,32 +253,20 @@ export function Dashboard() {
         </div>
       )}
 
-      <section className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricTile label="Recommendations" value={recs.length ? String(recs.length) : "0"} />
-        <MetricTile label="Average Score" value={avgScore ? String(avgScore) : "--"} />
-        <MetricTile label="Signals Loaded" value={String(allSignals.length)} />
-      </section>
+      {/* Premium KPI Dashboard */}
+      <KPIDashboard 
+        recommendationsCount={recs.length}
+        averageScore={avgScore}
+        signalsLoaded={allSignals.length}
+        isLive={status?.supabase || false}
+      />
 
-      <nav className="sticky top-0 z-30 -mx-4 mb-6 border-y border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:rounded-lg sm:border">
-        <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => !tab.disabled && tab.onSelect(tab.id)}
-              disabled={tab.disabled}
-              className={`shrink-0 rounded-md border px-3 py-2 text-xs font-bold uppercase tracking-wide transition ${
-                activeTab === tab.id
-                  ? tab.activeClass
-                  : "border-slate-800 bg-slate-900/70 text-slate-400 hover:border-slate-700 hover:text-slate-200"
-              } ${tab.disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"}`}
-            >
-              {tab.label}
-              {tab.disabled ? " Locked" : ""}
-            </button>
-          ))}
-        </div>
-      </nav>
+      {/* Module Navigation */}
+      <ModuleNavigation 
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        isAdminMode={sessionUser?.role === "admin"}
+      />
 
       {error && (
         <div className="mb-6 rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">

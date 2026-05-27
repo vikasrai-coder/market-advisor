@@ -16,20 +16,27 @@ ROLES_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "use
 TRADES_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "admin_trades_cache.json")
 
 DEFAULT_PERMISSIONS = {
-    "can_view_charts": True,
-    "can_view_recommendations": True,
-    "can_view_heatmap": True,
-    "can_view_signals": True,
-    "can_backtest": True,
-    "can_use_portfolio": True,
+    "can_view_charts": False,
+    "can_view_recommendations": False,
+    "can_view_heatmap": False,
+    "can_view_signals": False,
+    "can_backtest": False,
+    "can_use_portfolio": False,
     "can_use_chatbot": False,
 }
 
 def _get_default_permissions(is_admin: bool) -> Dict[str, bool]:
-    perms = DEFAULT_PERMISSIONS.copy()
     if is_admin:
-        perms["can_use_chatbot"] = True
-    return perms
+        return {
+            "can_view_charts": True,
+            "can_view_recommendations": True,
+            "can_view_heatmap": True,
+            "can_view_signals": True,
+            "can_backtest": True,
+            "can_use_portfolio": True,
+            "can_use_chatbot": True,
+        }
+    return DEFAULT_PERMISSIONS.copy()
 
 ADMIN_EMAIL = "vikas.raiexp@gmail.com"
 

@@ -84,6 +84,12 @@ def health():
 
 
 from pydantic import BaseModel
+from app.domains.strategies.models import (
+    StrategyCloneRequest,
+    StrategyCreateRequest,
+    StrategyValidationRequest,
+    StrategyVersionRequest,
+)
 
 class AnalysisRequest(BaseModel):
     mode: str = "swing"
@@ -144,6 +150,68 @@ class ChatbotRequest(BaseModel):
     symbol: str | None = None
     shares: float | None = None
     buy_price: float | None = None
+
+
+@app.post("/api/strategies/validate")
+def validate_strategy_endpoint(req: StrategyValidationRequest):
+    try:
+        from app.domains.strategies.service import validate_definition
+        return validate_definition(req.definition)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/strategies")
+def list_strategies_endpoint(user_id: str):
+    try:
+        from app.domains.strategies.service import list_strategies
+        return {"strategies": list_strategies(user_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/strategies")
+def create_strategy_endpoint(req: StrategyCreateRequest):
+    try:
+        from app.domains.strategies.service import create_strategy
+        return {"strategy": create_strategy(req.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/strategies/{strategy_id}")
+def get_strategy_endpoint(strategy_id: str, user_id: str):
+    try:
+        from app.domains.strategies.service import get_strategy
+        return {"strategy": get_strategy(strategy_id, user_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/strategies/{strategy_id}/versions")
+def create_strategy_version_endpoint(strategy_id: str, req: StrategyVersionRequest):
+    try:
+        from app.domains.strategies.service import add_strategy_version
+        return {"version": add_strategy_version(strategy_id, req.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/strategies/{strategy_id}/clone")
+def clone_strategy_endpoint(strategy_id: str, req: StrategyCloneRequest):
+    try:
+        from app.domains.strategies.service import clone_strategy
+        return {"strategy": clone_strategy(strategy_id, req.user_id, req.name)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @app.post("/api/backtest/simulate")
 def simulate_backtest(req: BacktestRequest):

@@ -1,19 +1,55 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { Dashboard } from "@/components/Dashboard";
+import { Landing } from "@/components/Landing";
 
 export default function HomePage() {
-  return (
-    <div className="mx-auto max-w-6xl px-4 py-10">
-      <section className="mb-10">
-        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          Top 10 NSE stocks to buy today
-        </h1>
-        <p className="mt-2 max-w-2xl text-slate-400">
-          Scans NSE large, mid, and small cap stocks via Yahoo Finance — trend, RSI/MACD/SMA,
-          news sentiment via Hugging Face, and AI reasoning. Signals are for the next trading session
-          (NSE/BSE).
-        </p>
-      </section>
-      <Dashboard />
-    </div>
-  );
+  const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const offlineId = localStorage.getItem("offline_user_id");
+        if (offlineId) {
+          setIsAuthenticated(true);
+          setLoading(false);
+          return;
+        }
+
+        const supabase = createClient();
+        const { data } = await supabase.auth.getUser();
+        if (data?.user) {
+          setIsAuthenticated(true);
+        }
+      } catch (err) {
+        console.error("Auth check error:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    checkAuth();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+        <p className="text-sm font-semibold tracking-wider animate-pulse">LOADING PLATFORM...</p>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return (
+      <main className="flex-1">
+        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+          <Dashboard />
+        </div>
+      </main>
+    );
+  }
+
+  return <Landing />;
 }

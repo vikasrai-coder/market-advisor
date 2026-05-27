@@ -392,3 +392,91 @@ export async function askChatbot(message: string, symbol?: string, shares?: numb
     body: JSON.stringify({ message, symbol: symbol || null, shares: shares || null, buy_price: buyPrice || null }),
   });
 }
+
+export type StrategyDefinition = {
+  meta: { name: string; market: string; timeframe: string };
+  universe: { type: "watchlist" | "symbols" | "scanner"; symbols: string[] };
+  entry: Record<string, unknown>;
+  exit: Record<string, unknown>;
+  position: Record<string, unknown>;
+  reentry?: Record<string, unknown>;
+  risk?: Record<string, unknown>;
+};
+
+export type StrategyVersion = {
+  id: string;
+  strategy_id: string;
+  version_number: number;
+  version_label: string;
+  definition: StrategyDefinition;
+  checksum: string;
+  validation_status: "valid" | "invalid";
+  validation_errors: string[];
+  validation_warnings?: string[];
+  notes?: string | null;
+  created_by_user_id: string;
+  created_at?: string;
+};
+
+export type Strategy = {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  description?: string | null;
+  visibility: "private" | "unlisted" | "public";
+  status: "draft" | "active" | "archived";
+  current_version_id?: string | null;
+  current_version?: StrategyVersion | null;
+  versions?: StrategyVersion[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type StrategyValidation = {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+};
+
+export async function validateStrategy(definition: StrategyDefinition) {
+  return fetchJson<StrategyValidation>("/api/strategies/validate", {
+    method: "POST",
+    body: JSON.stringify({ definition }),
+  });
+}
+
+export async function getStrategies(userId: string) {
+  return fetchJson<{ strategies: Strategy[] }>(`/api/strategies?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function createStrategy(payload: {
+  user_id: string;
+  name: string;
+  description?: string | null;
+  visibility?: Strategy["visibility"];
+  status?: Strategy["status"];
+  definition: StrategyDefinition;
+}) {
+  return fetchJson<{ strategy: Strategy }>("/api/strategies", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function addStrategyVersion(strategyId: string, payload: {
+  user_id: string;
+  definition: StrategyDefinition;
+  notes?: string | null;
+}) {
+  return fetchJson<{ version: StrategyVersion }>(`/api/strategies/${strategyId}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cloneStrategy(strategyId: string, userId: string, name?: string) {
+  return fetchJson<{ strategy: Strategy }>(`/api/strategies/${strategyId}/clone`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, name: name || null }),
+  });
+}

@@ -21,6 +21,10 @@ AI **Indian stock** (NSE) buy recommendation platform that automatically produce
 - Stores stocks, metrics, news, recommendations, and signals in Supabase
 - Daily cron at 6:00 PM (API scheduler) or manual "Run daily analysis"
 
+## Algo trading platform roadmap
+
+See [`ALGO_TRADING_PLATFORM_ROADMAP.md`](./ALGO_TRADING_PLATFORM_ROADMAP.md) for the staged product and technical architecture to evolve this alert/recommendation app into a full no-code strategy, backtesting, paper trading, live execution, and marketplace platform.
+
 ## Quick start
 
 ### 1. Supabase
