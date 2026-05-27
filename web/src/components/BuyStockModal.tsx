@@ -40,6 +40,8 @@ export function BuyStockModal({
   const [customTarget, setCustomTarget] = useState<number | null>(null);
   const [customStop, setCustomStop] = useState<number | null>(null);
 
+  const [messageApi, contextHolder] = message.useMessage();
+
   // Set default values when modal opens
   useEffect(() => {
     if (open) {
@@ -53,7 +55,7 @@ export function BuyStockModal({
 
   const handleBuy = async () => {
     if (qty <= 0) {
-      message.error("Quantity must be greater than zero");
+      messageApi.error("Quantity must be greater than zero");
       return;
     }
     
@@ -64,13 +66,13 @@ export function BuyStockModal({
     try {
       const res = await buyHolding(userId, symbol, qty, defaultPrice, targetPrice, stopLoss);
       if (res.success) {
-        message.success(`Successfully purchased ${qty} share(s) of ${displaySymbol || symbol}!`);
+        messageApi.success(`Successfully purchased ${qty} share(s) of ${displaySymbol || symbol}!`);
         onSuccess();
       } else {
-        message.error("Transaction failed");
+        messageApi.error("Transaction failed");
       }
     } catch (err: any) {
-      message.error(err.message || "Failed to complete transaction");
+      messageApi.error(err.message || "Failed to complete transaction");
     } finally {
       setLoading(false);
     }
@@ -98,6 +100,7 @@ export function BuyStockModal({
         backdropFilter: "blur(12px)",
       }}
     >
+      {contextHolder}
       <div className="space-y-5 pt-4 text-slate-300">
         
         {/* Profile Row */}

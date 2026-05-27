@@ -7,7 +7,6 @@ import {
   Input,
   Button,
   Table,
-  Space,
   Avatar,
   Switch,
   Tooltip,
@@ -68,10 +67,6 @@ export function UserPermissionsControl({
   const [creating, setCreating] = useState(false);
   const [permissionsLoading, setPermissionsLoading] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
   const loadUsers = async () => {
     try {
       setLoading(true);
@@ -84,6 +79,10 @@ export function UserPermissionsControl({
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
 
   const handleCreateUser = async (values: {
     email: string;
