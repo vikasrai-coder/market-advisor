@@ -3,6 +3,7 @@
 import React from "react";
 import { Layout, Space, ConfigProvider, theme } from "antd";
 import { UserPermissionsControl } from "./UserPermissionsControl";
+import { SystemSettingsControl } from "./SystemSettingsControl";
 import { PrivateTradingCard } from "./PrivateTradingCard";
 import { TelegramIntegration } from "./TelegramIntegration";
 
@@ -57,6 +58,9 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
           {/* User Permissions Control Center */}
           <UserPermissionsControl onImpersonate={handleImpersonate} />
 
+          {/* Resource Usage & System Optimization Switch */}
+          <SystemSettingsControl />
+
           {/* Private Trading Dashboard */}
           <PrivateTradingCard symbols={[
             "INFY",
@@ -82,4 +86,5 @@ export default function AdminDashboard({ onImpersonate }: AdminDashboardProps) {
     </ConfigProvider>
   );
 }
+
 

@@ -559,3 +559,19 @@ export async function adminReconcileAlpha() {
     { method: "POST" }
   );
 }
+
+export interface SystemSettings {
+  usage_mode: "low" | "high";
+}
+
+export async function adminGetSystemSettings() {
+  return fetchJson<SystemSettings>("/api/admin/system-settings");
+}
+
+export async function adminSaveSystemSettings(usageMode: "low" | "high") {
+  return fetchJson<{ success: boolean; settings: SystemSettings }>("/api/admin/system-settings", {
+    method: "POST",
+    body: JSON.stringify({ usage_mode: usageMode }),
+  });
+}
+

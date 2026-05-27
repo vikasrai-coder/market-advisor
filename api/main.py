@@ -145,6 +145,11 @@ class AdminTradeCloseRequest(BaseModel):
     trade_id: str
     sell_price: float
 
+
+class SystemSettingsRequest(BaseModel):
+    usage_mode: str
+
+
 class ChatbotRequest(BaseModel):
     message: str
     symbol: str | None = None
@@ -520,6 +525,24 @@ def get_user_profile_endpoint(user_id: str, email: str | None = None):
         from app.services.user_roles import get_user_role_profile
         profile = get_user_role_profile(user_id, email)
         return profile
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/system-settings")
+def get_system_settings():
+    try:
+        from app.services.system_settings import get_settings
+        return get_settings()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/system-settings")
+def save_system_settings(req: SystemSettingsRequest):
+    try:
+        from app.services.system_settings import save_settings
+        return save_settings(req.usage_mode)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

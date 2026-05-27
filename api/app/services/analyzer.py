@@ -146,11 +146,15 @@ def run_full_analysis(
     # 4. Fetch news only for top 15 candidate stocks in parallel to speed up news checks
     top_candidates = scored[:15]
     
-    import os
-    is_serverless = bool(os.getenv("VERCEL")) or bool(os.getenv("IS_VERCEL"))
-    is_intraday = cfg.mode == "intraday"
-    
-    if is_intraday or is_serverless:
+    from app.services.system_settings import get_settings
+    settings_data = get_settings()
+    usage_mode = settings_data.get("usage_mode", "low")
+
+    # Run lightweight (skipping heavy AI calls) if mode is intraday OR usage_mode is set to "low".
+    # This keeps Vercel Fluid CPU usage low by default while letting the admin toggle "high" usage at any time.
+    run_lightweight = (cfg.mode == "intraday" or usage_mode == "low")
+
+    if run_lightweight:
         # Skip heavy news fetching & classification in intraday or Vercel serverless functions
         # to save Vercel Fluid Active CPU time and ensure quick execution.
         for item in top_candidates:
@@ -235,7 +239,7 @@ def run_full_analysis(
 
     # 5. Parallel generation of AI insights for top buys
     def _fetch_buy_insight(rank, item):
-        if is_intraday or is_serverless:
+        if run_lightweight:
             # Quick local rule-based generation to save API roundtrip & CPU billing on Vercel
             display = item["profile"].get("display_symbol") or item["symbol"].replace(".NS", "")
             insight = {
@@ -268,7 +272,7 @@ def run_full_analysis(
 
     # Parallel generation of sell rationales
     def _fetch_sell_rationale(item):
-        if is_intraday or is_serverless:
+        if run_lightweight:
             display = item["symbol"].replace(".NS", "").replace(".BO", "")
             return item, f"Reduce position in {display} due to technical indicators dropping below signal thresholds."
 
