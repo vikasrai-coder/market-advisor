@@ -92,7 +92,7 @@ export function BuyStockModal({
       }
       className="!bg-slate-900 border border-slate-700 rounded-xl overflow-hidden"
       wrapClassName="dark-modal-wrapper"
-      bodyStyle={{ backgroundColor: "transparent" }}
+      styles={{ body: { backgroundColor: "transparent" } }}
       style={{
         background: "transparent",
         backdropFilter: "blur(12px)",

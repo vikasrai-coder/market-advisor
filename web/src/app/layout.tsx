@@ -42,7 +42,7 @@ export default async function RootLayout({
               (function() {
                 const originalError = console.error;
                 console.error = function(...args) {
-                  if (args[0] && typeof args[0] === 'string' && args[0].includes('[antd: compatible]')) {
+                  if (args[0] && typeof args[0] === 'string' && (args[0].includes('[antd: compatible]') || args[0].includes('[antd: message]') || args[0].includes('[antd: Modal]'))) {
                     return;
                   }
                   originalError.apply(console, args);
