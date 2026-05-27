@@ -694,7 +694,56 @@ def admin_penny_scans():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/admin/alpha-alerts")
+def admin_alpha_alerts():
+    """Run the alpha scanner and return high-conviction same-day trade alerts.
 
+    Admin-only. Filters across all cap segments for 10%+ profit potential.
+    """
+    try:
+        from app.services.alpha_scanner import scan_alpha_alerts
+        from app.services.alpha_tracker import record_alerts, get_performance, record_training_data
+
+        # Use adaptive thresholds if available
+        perf = get_performance()
+        adaptive = perf.get("adaptive_thresholds", {})
+        thresholds = {}
+        if adaptive.get("min_composite"):
+            thresholds["min_composite"] = adaptive["min_composite"]
+
+        result = scan_alpha_alerts(thresholds=thresholds or None)
+
+        # Record alerts for tracking
+        if result.get("alerts"):
+            record_alerts(result["alerts"])
+
+        # Record training data for all scanned symbols
+        if result.get("raw_features"):
+            record_training_data(result["raw_features"])
+
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/alpha-performance")
+def admin_alpha_performance():
+    """Return rolling accuracy and training metrics for the alpha alert system."""
+    try:
+        from app.services.alpha_tracker import get_performance
+        return get_performance()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/alpha-reconcile")
+def admin_alpha_reconcile():
+    """Reconcile pending alpha alerts against actual market prices."""
+    try:
+        from app.services.alpha_tracker import reconcile_alerts
+        return reconcile_alerts()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 

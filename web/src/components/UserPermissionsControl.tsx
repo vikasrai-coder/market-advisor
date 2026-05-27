@@ -61,6 +61,7 @@ interface UserPermissionsControlProps {
 export function UserPermissionsControl({
   onImpersonate,
 }: UserPermissionsControlProps) {
+  const [messageApi, contextHolder] = message.useMessage();
   const [form] = Form.useForm();
   const [users, setUsers] = useState<UserRoleProfile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,7 +78,7 @@ export function UserPermissionsControl({
       const response = await adminGetUsers();
       setUsers(response.users || []);
     } catch (error) {
-      message.error("Failed to load users");
+      messageApi.error("Failed to load users");
       console.error(error);
     } finally {
       setLoading(false);
@@ -91,11 +92,11 @@ export function UserPermissionsControl({
     try {
       setCreating(true);
       await adminCreateUser(values.email, values.password);
-      message.success("User created successfully");
+      messageApi.success("User created successfully");
       form.resetFields();
       await loadUsers();
     } catch (error: any) {
-      message.error(error.message || "Failed to create user");
+      messageApi.error(error.message || "Failed to create user");
     } finally {
       setCreating(false);
     }
@@ -136,10 +137,10 @@ export function UserPermissionsControl({
       };
 
       await adminSetPermissions(userId, updatedPermissions);
-      message.success("Permission updated");
+      messageApi.success("Permission updated");
       await loadUsers();
     } catch (error) {
-      message.error("Failed to update permission");
+      messageApi.error("Failed to update permission");
     } finally {
       setPermissionsLoading(null);
     }
@@ -339,14 +340,17 @@ export function UserPermissionsControl({
   ];
 
   return (
-    <Card
-      className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
-      style={{
-        background: "transparent",
-        backdropFilter: "blur(10px)",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-      }}
-      title={
+    <>
+      {contextHolder}
+      <Card
+        className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
+        style={{
+          background: "transparent",
+          backdropFilter: "blur(10px)",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
+        }}
+        title={
+
         <div className="flex items-center gap-2">
           <LockOutlined className="text-[#8B5CF6]" />
           <span className="text-white font-bold text-lg">
@@ -432,5 +436,6 @@ export function UserPermissionsControl({
         )}
       </Spin>
     </Card>
+    </>
   );
 }

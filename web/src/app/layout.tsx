@@ -1,3 +1,4 @@
+import "@ant-design/v5-patch-for-react-19";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthHeader } from "@/components/AuthHeader";
@@ -34,6 +35,23 @@ export default async function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                const originalError = console.error;
+                console.error = function(...args) {
+                  if (args[0] && typeof args[0] === 'string' && args[0].includes('[antd: compatible]')) {
+                    return;
+                  }
+                  originalError.apply(console, args);
+                };
+              })();
+            `
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">
         {user ? <AuthHeader email={user.email} /> : null}
         <main className="flex-1">{children}</main>

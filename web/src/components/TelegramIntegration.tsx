@@ -41,6 +41,7 @@ export function TelegramIntegration({
   chatId = "123456789",
   isActive = true,
 }: TelegramIntegrationProps) {
+  const [messageApi, contextHolder] = message.useMessage();
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
@@ -56,14 +57,14 @@ export function TelegramIntegration({
         success: result.success || false,
         message: result.message || "Test alert sent",
       });
-      message.success(result.message || "Test alert sent successfully");
+      messageApi.success(result.message || "Test alert sent successfully");
     } catch (error: any) {
       const errorMsg = error.message || "Failed to send test alert";
       setTestResult({
         success: false,
         message: errorMsg,
       });
-      message.error(errorMsg);
+      messageApi.error(errorMsg);
     } finally {
       setTesting(false);
     }
@@ -76,13 +77,16 @@ export function TelegramIntegration({
   };
 
   return (
-    <Card
-      className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
-      style={{
-        background: "transparent",
-        backdropFilter: "blur(10px)",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-      }}
+    <>
+      {contextHolder}
+      <Card
+        className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
+        style={{
+          background: "transparent",
+          backdropFilter: "blur(10px)",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
+        }}
+
       title={
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-3">
@@ -241,5 +245,6 @@ export function TelegramIntegration({
         </div>
       </div>
     </Card>
+    </>
   );
 }

@@ -47,6 +47,7 @@ const POPULAR_SYMBOLS = [
 export function PrivateTradingCard({
   symbols = POPULAR_SYMBOLS,
 }: PrivateTradingCardProps) {
+  const [messageApi, contextHolder] = message.useMessage();
   const [form] = Form.useForm();
   const [trades, setTrades] = useState<AdminTrade[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,7 +64,7 @@ export function PrivateTradingCard({
       const response = await adminGetTrades();
       setTrades(response.trades || []);
     } catch (error) {
-      message.error("Failed to load trades");
+      messageApi.error("Failed to load trades");
       console.error(error);
     } finally {
       setLoading(false);
@@ -78,11 +79,11 @@ export function PrivateTradingCard({
     try {
       setCreating(true);
       await adminBuyTrade(values.symbol, values.qty, values.buyPrice);
-      message.success("Trade recorded successfully");
+      messageApi.success("Trade recorded successfully");
       form.resetFields();
       await loadTrades();
     } catch (error: any) {
-      message.error(error.message || "Failed to record trade");
+      messageApi.error(error.message || "Failed to record trade");
     } finally {
       setCreating(false);
     }
@@ -90,16 +91,16 @@ export function PrivateTradingCard({
 
   const handleCloseTrade = async (tradeId: string, sellPrice: number) => {
     if (sellPrice <= 0) {
-      message.error("Please enter a valid sell price");
+      messageApi.error("Please enter a valid sell price");
       return;
     }
     try {
       setClosingTradeId(tradeId);
       await adminSellTrade(tradeId, sellPrice);
-      message.success("Trade closed successfully");
+      messageApi.success("Trade closed successfully");
       await loadTrades();
     } catch (error: any) {
-      message.error(error.message || "Failed to close trade");
+      messageApi.error(error.message || "Failed to close trade");
     } finally {
       setClosingTradeId(null);
     }
@@ -180,14 +181,17 @@ export function PrivateTradingCard({
   ];
 
   return (
-    <Card
-      className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
-      style={{
-        background: "transparent",
-        backdropFilter: "blur(10px)",
-        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-      }}
-      title={
+    <>
+      {contextHolder}
+      <Card
+        className="border-[1px] border-[#374151] bg-gradient-to-br from-[#111827] via-[#1F2937] to-[#111827] rounded-xl"
+        style={{
+          background: "transparent",
+          backdropFilter: "blur(10px)",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
+        }}
+        title={
+
         <div className="flex items-center gap-2">
           <ShoppingOutlined className="text-[#10B981]" />
           <span className="text-white font-bold text-lg">
@@ -293,5 +297,6 @@ export function PrivateTradingCard({
         </Col>
       </Row>
     </Card>
+    </>
   );
 }

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.2.6",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.1",
     "antd": "^5.11.3",

@@ -1,0 +1,241 @@
+"""Alpha Scanner — High-conviction same-day trade filter.
+
+Surfaces only trades where multiple technical signals converge, targeting
+10%+ intraday profit potential across all cap segments (small/mid/large).
+
+This is an admin-only analytical tool. All outputs carry market risk.
+"""
+
+from __future__ import annotations
+
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Any
+
+import pandas as pd
+import yfinance as yf
+
+from app.services import market_data, technicals
+from app.services.supabase_store import get_client
+
+
+# ---------------------------------------------------------------------------
+# Configurable thresholds — the tracker can tighten these over time
+# ---------------------------------------------------------------------------
+
+DEFAULT_THRESHOLDS = {
+    "min_composite": 75,        # minimum composite score (trend+technical weighted)
+    "min_rsi": 38,              # RSI floor — avoid dead momentum
+    "max_rsi": 70,              # RSI ceiling — avoid overbought traps
+    "min_volume_spike": 1.3,    # volume vs 20-period avg multiplier
+    "require_vwap_above": True, # price must be above VWAP
+    "require_macd_cross": False, # bullish MACD crossover (nice-to-have, not required)
+    "target_pct": 0.10,         # 10% profit target
+    "stop_pct": 0.03,           # 3% stop loss (3.3:1 reward-to-risk)
+}
+
+
+def scan_alpha_alerts(
+    thresholds: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the alpha scanner across all watchlist symbols.
+
+    Returns a dict with:
+      - alerts: list of AlphaAlert dicts
+      - scanned: total symbols processed
+      - passed: how many passed the filter
+      - generated_at: ISO timestamp
+      - thresholds: the filter thresholds used
+    """
+    cfg = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    symbols = market_data.get_watchlist()
+
+    # Bulk download 5-day 60-min candles
+    bulk_history: dict[str, pd.DataFrame] = {}
+    try:
+        tickers_str = " ".join(symbols)
+        df = yf.download(
+            tickers_str,
+            period="5d",
+            interval="60m",
+            group_by="ticker",
+            progress=False,
+            threads=True,
+        )
+        for sym in symbols:
+            try:
+                if isinstance(df.columns, pd.MultiIndex):
+                    if sym in df.columns.get_level_values(0):
+                        sym_df = df[sym].copy().dropna(how="all")
+                        if not sym_df.empty:
+                            bulk_history[sym] = sym_df
+                else:
+                    sym_df = df.copy().dropna(how="all")
+                    if not sym_df.empty:
+                        bulk_history[sym] = sym_df
+            except Exception:
+                pass
+    except Exception as exc:
+        print(f"[AlphaScanner] Bulk download error: {exc}")
+
+    # Fetch DB profiles for cap segment info
+    db_profiles: dict[str, dict] = {}
+    client = get_client()
+    if client:
+        try:
+            res = client.table("stocks").select("*").execute()
+            for row in res.data:
+                db_profiles[row["symbol"]] = row
+        except Exception:
+            pass
+
+    # Parallel analysis
+    alerts: list[dict[str, Any]] = []
+    scanned = 0
+
+    def _analyze_one(sym: str) -> dict[str, Any] | None:
+        history = bulk_history.get(sym)
+        if history is None or history.empty:
+            return None
+
+        metrics = technicals.compute_intraday_indicators(history)
+        profile = db_profiles.get(sym, {})
+
+        # Compute weighted composite (same weights as intraday scan mode)
+        trend = metrics.get("trend_score") or 0
+        technical = metrics.get("technical_score") or 0
+        composite = round(trend * 0.50 + technical * 0.50, 2)
+
+        price = metrics.get("price")
+        rsi = metrics.get("rsi")
+        vol_spike = metrics.get("volume_spike", False)
+        vwap = metrics.get("vwap")
+        bullish_cross = metrics.get("bullish_crossover", False)
+
+        # Build raw features for training
+        raw_feat = {
+            "symbol": sym,
+            "display_symbol": sym.replace(".NS", "").replace(".BO", ""),
+            "price": round(price, 2) if price else None,
+            "composite_score": composite,
+            "trend_score": trend,
+            "technical_score": technical,
+            "rsi": round(rsi, 2) if rsi else None,
+            "vwap": round(vwap, 2) if vwap else None,
+            "macd_crossover": bullish_cross,
+            "volume_spike": vol_spike,
+            "cap_segment": profile.get("cap_segment", "unknown"),
+            "sector": profile.get("sector", "N/A"),
+            "generated_at": datetime.now().isoformat(),
+        }
+
+        # --- Apply strict filters ---
+        passed_filter = True
+        if composite < cfg["min_composite"]:
+            passed_filter = False
+        elif rsi is not None and (rsi < cfg["min_rsi"] or rsi > cfg["max_rsi"]):
+            passed_filter = False
+        elif cfg["min_volume_spike"] > 1.0 and not vol_spike:
+            passed_filter = False
+        elif cfg["require_vwap_above"] and price and vwap and price < vwap:
+            passed_filter = False
+        elif cfg["require_macd_cross"] and not bullish_cross:
+            passed_filter = False
+
+        if not passed_filter:
+            return {"alert": None, "raw_features": raw_feat}
+
+        # --- Passed all filters → build alert ---
+        entry = round(price, 2) if price else 0
+        target = round(entry * (1 + cfg["target_pct"]), 2)
+        stop_loss = round(entry * (1 - cfg["stop_pct"]), 2)
+
+        # Confidence scoring: stack of confirmations
+        confidence = 0.60
+        if bullish_cross:
+            confidence += 0.12
+        if vol_spike:
+            confidence += 0.08
+        if vwap and price and price > vwap:
+            confidence += 0.06
+        if rsi and 45 <= rsi <= 60:
+            confidence += 0.06
+        if composite >= 85:
+            confidence += 0.08
+        confidence = min(confidence, 0.98)
+
+        cap_segment = profile.get("cap_segment", "unknown")
+        display = sym.replace(".NS", "").replace(".BO", "")
+        name = profile.get("name", display)
+        sector = profile.get("sector", "N/A")
+
+        # Build reasoning
+        signals = []
+        if bullish_cross:
+            signals.append("MACD bullish crossover on 60m")
+        if vol_spike:
+            signals.append("Volume spike >1.5× avg")
+        if vwap and price and price > vwap:
+            signals.append(f"Price ₹{price:.0f} above VWAP ₹{vwap:.0f}")
+        if rsi:
+            signals.append(f"RSI {rsi:.1f} in momentum zone")
+        signals.append(f"Composite score {composite:.0f}/100")
+
+        reasoning = f"{display} ({cap_segment.upper()} cap) showing strong intraday setup. " + ". ".join(signals) + "."
+
+        alert = {
+            "id": str(uuid.uuid4()),
+            "symbol": sym,
+            "display_symbol": display,
+            "name": name,
+            "sector": sector,
+            "cap_segment": cap_segment,
+            "entry_price": entry,
+            "target_price": target,
+            "stop_loss": stop_loss,
+            "target_pct": round(cfg["target_pct"] * 100, 1),
+            "stop_pct": round(cfg["stop_pct"] * 100, 1),
+            "composite_score": composite,
+            "rsi": round(rsi, 2) if rsi else None,
+            "vwap": round(vwap, 2) if vwap else None,
+            "macd_crossover": bullish_cross,
+            "volume_spike": vol_spike,
+            "confidence": round(confidence, 2),
+            "reasoning": reasoning,
+            "key_signals": signals,
+            "generated_at": datetime.now().isoformat(),
+        }
+
+        return {"alert": alert, "raw_features": raw_feat}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {
+            pool.submit(_analyze_one, sym): sym
+            for sym in symbols
+        }
+        raw_features = []
+        for future in as_completed(futures):
+            scanned += 1
+            try:
+                result = future.result(timeout=15)
+                if result is not None:
+                    if result.get("raw_features"):
+                        raw_features.append(result["raw_features"])
+                    if result.get("alert"):
+                        alerts.append(result["alert"])
+            except Exception:
+                pass
+
+    # Sort by composite score descending, then confidence
+    alerts.sort(key=lambda a: (a["composite_score"], a["confidence"]), reverse=True)
+
+    return {
+        "alerts": alerts,
+        "raw_features": raw_features,
+        "scanned": scanned,
+        "passed": len(alerts),
+        "generated_at": datetime.now().isoformat(),
+        "thresholds": cfg,
+    }
+

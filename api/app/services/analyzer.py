@@ -145,43 +145,68 @@ def run_full_analysis(
 
     # 4. Fetch news only for top 15 candidate stocks in parallel to speed up news checks
     top_candidates = scored[:15]
-    candidate_news = {}
-    with ThreadPoolExecutor(max_workers=5) as news_pool:
-        news_futures = {
-            news_pool.submit(market_data.fetch_news, item["symbol"], limit=3): item["symbol"]
-            for item in top_candidates
-        }
-        for future in as_completed(news_futures):
-            sym = news_futures[future]
-            try:
-                candidate_news[sym] = future.result()
-            except Exception:
-                candidate_news[sym] = []
+    
+    import os
+    is_serverless = bool(os.getenv("VERCEL")) or bool(os.getenv("IS_VERCEL"))
+    is_intraday = cfg.mode == "intraday"
+    
+    if is_intraday or is_serverless:
+        # Skip heavy news fetching & classification in intraday or Vercel serverless functions
+        # to save Vercel Fluid Active CPU time and ensure quick execution.
+        for item in top_candidates:
+            trend = item["metrics"].get("trend_score") or 50.0
+            technical = item["metrics"].get("technical_score") or 50.0
+            fundamental = item["metrics"].get("fundamental_score") or 0.0
+            news_score = 50.0
+            
+            composite = round(
+                trend * cfg.weight_trend 
+                + technical * cfg.weight_technical 
+                + news_score * cfg.weight_news
+                + fundamental * cfg.weight_fundamental,
+                2,
+            )
+            item["news_score"] = 50.0
+            item["composite_score"] = composite
+            item["news_rows"] = []
+    else:
+        candidate_news = {}
+        with ThreadPoolExecutor(max_workers=5) as news_pool:
+            news_futures = {
+                news_pool.submit(market_data.fetch_news, item["symbol"], limit=3): item["symbol"]
+                for item in top_candidates
+            }
+            for future in as_completed(news_futures):
+                sym = news_futures[future]
+                try:
+                    candidate_news[sym] = future.result()
+                except Exception:
+                    candidate_news[sym] = []
 
-    # Update candidate stocks with real news scores and recompute final composite
-    for item in top_candidates:
-        sym = item["symbol"]
-        articles = candidate_news.get(sym, [])
-        news_score = _compute_news_score(articles)
-        
-        trend = item["metrics"].get("trend_score") or 50.0
-        technical = item["metrics"].get("technical_score") or 50.0
-        fundamental = item["metrics"].get("fundamental_score") or 0.0
-        
-        composite = round(
-            trend * cfg.weight_trend 
-            + technical * cfg.weight_technical 
-            + news_score * cfg.weight_news
-            + fundamental * cfg.weight_fundamental,
-            2,
-        )
-        
-        item["news_score"] = round(news_score, 2)
-        item["composite_score"] = composite
-        item["news_rows"] = [
-            {**article, "sentiment_label": "neutral", "sentiment_score": 0.5}
-            for article in articles
-        ]
+        # Update candidate stocks with real news scores and recompute final composite
+        for item in top_candidates:
+            sym = item["symbol"]
+            articles = candidate_news.get(sym, [])
+            news_score = _compute_news_score(articles)
+            
+            trend = item["metrics"].get("trend_score") or 50.0
+            technical = item["metrics"].get("technical_score") or 50.0
+            fundamental = item["metrics"].get("fundamental_score") or 0.0
+            
+            composite = round(
+                trend * cfg.weight_trend 
+                + technical * cfg.weight_technical 
+                + news_score * cfg.weight_news
+                + fundamental * cfg.weight_fundamental,
+                2,
+            )
+            
+            item["news_score"] = round(news_score, 2)
+            item["composite_score"] = composite
+            item["news_rows"] = [
+                {**article, "sentiment_label": "neutral", "sentiment_score": 0.5}
+                for article in articles
+            ]
 
     # Re-sort scored list and select top buys
     scored.sort(key=lambda x: x["composite_score"], reverse=True)
@@ -210,6 +235,20 @@ def run_full_analysis(
 
     # 5. Parallel generation of AI insights for top buys
     def _fetch_buy_insight(rank, item):
+        if is_intraday or is_serverless:
+            # Quick local rule-based generation to save API roundtrip & CPU billing on Vercel
+            display = item["profile"].get("display_symbol") or item["symbol"].replace(".NS", "")
+            insight = {
+                "reasoning": f"{display} ({item['profile'].get('sector') or 'NSE'}) scores {item['composite_score']:.0f}/100. RSI is at {item['metrics'].get('rsi', 50):.1f} with active technical momentum.",
+                "confidence": min(0.95, item["composite_score"] / 100),
+                "key_factors": [
+                    "Technical crossovers and volume momentum",
+                    f"Sector: {item['profile'].get('sector') or 'N/A'}",
+                    "Rule-based quant filter passed",
+                ]
+            }
+            return rank, item, insight
+
         try:
             insight = hf_ai.generate_recommendation_insight(
                 item["symbol"],
@@ -229,6 +268,10 @@ def run_full_analysis(
 
     # Parallel generation of sell rationales
     def _fetch_sell_rationale(item):
+        if is_intraday or is_serverless:
+            display = item["symbol"].replace(".NS", "").replace(".BO", "")
+            return item, f"Reduce position in {display} due to technical indicators dropping below signal thresholds."
+
         try:
             rationale = hf_ai.generate_sell_rationale(item["symbol"], item["metrics"])
         except Exception:

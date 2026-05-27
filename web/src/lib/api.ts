@@ -480,3 +480,82 @@ export async function cloneStrategy(strategyId: string, userId: string, name?: s
     body: JSON.stringify({ user_id: userId, name: name || null }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Alpha Alerts (Admin-only)
+// ---------------------------------------------------------------------------
+
+export type AlphaAlert = {
+  id: string;
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  sector: string;
+  cap_segment: string;
+  entry_price: number;
+  target_price: number;
+  stop_loss: number;
+  target_pct: number;
+  stop_pct: number;
+  composite_score: number;
+  rsi: number | null;
+  vwap: number | null;
+  macd_crossover: boolean;
+  volume_spike: boolean;
+  confidence: number;
+  reasoning: string;
+  key_signals: string[];
+  generated_at: string;
+};
+
+export type AlphaAlertResponse = {
+  alerts: AlphaAlert[];
+  scanned: number;
+  passed: number;
+  generated_at: string;
+  thresholds: Record<string, number | boolean>;
+};
+
+export type AlphaDailyStat = {
+  date: string;
+  total_alerts: number;
+  target_hits: number;
+  stopped_out: number;
+  held: number;
+  win_rate: number;
+  avg_return_pct: number;
+};
+
+export type AlphaPerformance = {
+  total_alerts: number;
+  pending_alerts: number;
+  target_hits: number;
+  stopped_out: number;
+  held: number;
+  win_rate: number;
+  avg_return_pct: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  profit_factor: number;
+  streak: number;
+  streak_type: string;
+  training_progress: number;
+  recent_7d_win_rate: number;
+  daily_stats: AlphaDailyStat[];
+  adaptive_thresholds: Record<string, number | string>;
+};
+
+export async function adminGetAlphaAlerts() {
+  return fetchJson<AlphaAlertResponse>("/api/admin/alpha-alerts");
+}
+
+export async function adminGetAlphaPerformance() {
+  return fetchJson<AlphaPerformance>("/api/admin/alpha-performance");
+}
+
+export async function adminReconcileAlpha() {
+  return fetchJson<{ reconciled: number; target_hits: number; stopped_out: number; held: number }>(
+    "/api/admin/alpha-reconcile",
+    { method: "POST" }
+  );
+}

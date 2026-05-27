@@ -20,6 +20,7 @@ import UserWorkspace from "./UserWorkspace";
 import AdminDashboard from "./AdminDashboard";
 import ChatbotAdvisor from "./ChatbotAdvisor";
 import PennyScans from "./PennyScans";
+import AlphaAlerts from "./AlphaAlerts";
 import { KPIDashboard } from "./KPIDashboard";
 import { ModuleNavigation } from "./ModuleNavigation";
 import { createClient } from "@/lib/supabase/client";
@@ -35,7 +36,7 @@ type PermissionSet = {
 };
 
 type SessionUser = { id: string; email: string; role: string };
-type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans";
+type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha";
 
 const DEFAULT_PERMISSIONS: PermissionSet = {
   can_view_charts: false,
@@ -276,6 +277,8 @@ export function Dashboard() {
 
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
+      ) : activeTab === "alpha" && sessionUser?.role === "admin" && !impersonatedEmail ? (
+        <AlphaAlerts />
       ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <PennyScans />
       ) : activeTab === "scans" ? (
@@ -478,6 +481,12 @@ function buildTabs({
 
   if (sessionUser?.role === "admin" && !impersonatedEmail) {
     tabs.push(
+      {
+        id: "alpha",
+        label: "⚡ Alpha",
+        activeClass: "border-amber-400/70 bg-gradient-to-r from-amber-600 to-orange-600 text-white",
+        onSelect,
+      },
       {
         id: "pennyscans",
         label: "Penny Scans",

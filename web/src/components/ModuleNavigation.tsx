@@ -10,6 +10,7 @@ import {
   RobotOutlined,
   LineChartOutlined,
   LockOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 
 type ModuleTab =
@@ -19,6 +20,7 @@ type ModuleTab =
   | "portfolio"
   | "chatbot"
   | "pennyscans"
+  | "alpha"
   | "admin";
 
 interface ModuleNavigationProps {
@@ -42,6 +44,7 @@ export function ModuleNavigation({
   ];
 
   if (isAdminMode) {
+    items.push({ id: "alpha", label: "⚡ ALPHA", icon: <ThunderboltOutlined /> });
     items.push({ id: "admin", label: "ADMIN", icon: <LockOutlined /> });
   }
 
