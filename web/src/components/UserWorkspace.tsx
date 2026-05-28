@@ -9,11 +9,13 @@ import {
   syncWatchlist,
   getUserPassbook,
   reconcilePortfolioTriggers,
+  updatePortfolioThresholds,
   UserWatchlistItem,
   UserPortfolioResponse,
   PassbookItem,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import { Modal, InputNumber, Button, ConfigProvider, theme } from "antd";
 
 interface UserWorkspaceProps {
   userId?: string;
@@ -66,8 +68,18 @@ export default function UserWorkspace({
   const [buySymbol, setBuySymbol] = useState<string>("");
   const [buyQty, setBuyQty] = useState<number>(0);
   const [buyPriceInput, setBuyPriceInput] = useState<number>(0);
+  const [buyTargetInput, setBuyTargetInput] = useState<number>(0);
+  const [buyStopInput, setBuyStopInput] = useState<number>(0);
   const [portfolioLoading, setPortfolioLoading] = useState<boolean>(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
+
+  // Edit Triggers Modal State
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editSymbol, setEditSymbol] = useState("");
+  const [editTarget, setEditTarget] = useState<number>(0);
+  const [editStop, setEditStop] = useState<number>(0);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Sync state
   const [syncing, setSyncing] = useState<boolean>(false);
@@ -157,10 +169,19 @@ export default function UserWorkspace({
     setPortfolioLoading(true);
     setPortfolioError(null);
     try {
-      await buyHolding(effectiveUserId, buySymbol.trim().toUpperCase(), buyQty, buyPriceInput);
+      await buyHolding(
+        effectiveUserId,
+        buySymbol.trim().toUpperCase(),
+        buyQty,
+        buyPriceInput,
+        buyTargetInput > 0 ? buyTargetInput : null,
+        buyStopInput > 0 ? buyStopInput : null
+      );
       setBuySymbol("");
       setBuyQty(0);
       setBuyPriceInput(0);
+      setBuyTargetInput(0);
+      setBuyStopInput(0);
       await loadData();
     } catch (err) {
       setPortfolioError(getErrorMessage(err, "Transaction failed"));
@@ -500,6 +521,18 @@ export default function UserWorkspace({
                               </button>
                             )}
                             <button
+                              onClick={() => {
+                                setEditSymbol(hold.symbol);
+                                setEditTarget(hold.target_price || 0);
+                                setEditStop(hold.stop_loss || 0);
+                                setEditError(null);
+                                setEditModalOpen(true);
+                              }}
+                              className="text-amber-400 hover:text-amber-300 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 transition-all cursor-pointer shrink-0"
+                            >
+                              ✏️ Edit Triggers
+                            </button>
+                            <button
                               onClick={() => handleSellPosition(hold.symbol, hold.shares_quantity)}
                               disabled={apiConnected === false}
                               className="text-rose-500/80 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/15 transition-all cursor-pointer shrink-0"
@@ -592,12 +625,12 @@ export default function UserWorkspace({
             <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
               📥 Add Holdings Transaction
             </h4>
-            <form onSubmit={handleBuyHolding} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+            <form onSubmit={handleBuyHolding} className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-6 gap-4 items-end">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Symbol</label>
                 <input
                   type="text"
-                  placeholder="e.g. TATAMOTORS.NS"
+                  placeholder="TATAMOTORS.NS"
                   required
                   value={buySymbol}
                   onChange={(e) => setBuySymbol(e.target.value)}
@@ -633,6 +666,32 @@ export default function UserWorkspace({
                 />
               </div>
 
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Target Price (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="Optional"
+                  value={buyTargetInput || ""}
+                  onChange={(e) => setBuyTargetInput(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Stop Loss (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="Optional"
+                  value={buyStopInput || ""}
+                  onChange={(e) => setBuyStopInput(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
+                />
+              </div>
+
               <button
                 type="submit"
                 disabled={portfolioLoading || apiConnected === false}
@@ -648,6 +707,115 @@ export default function UserWorkspace({
         )}
 
       </div>
+
+      {editSymbol && (
+        <ConfigProvider
+          theme={{
+            algorithm: theme.darkAlgorithm,
+            token: {
+              colorPrimary: "#10B981",
+              colorBgBase: "#090d16",
+              colorTextBase: "#f3f4f6",
+              borderRadius: 12,
+            },
+          }}
+        >
+          <Modal
+            open={editModalOpen}
+            onCancel={() => setEditModalOpen(false)}
+            footer={null}
+            centered
+            title={
+              <div className="flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+                <span className="text-xl">✏️</span>
+                <span className="font-extrabold text-lg">Modify Active Triggers</span>
+              </div>
+            }
+            className="border border-slate-800 rounded-2xl overflow-hidden shadow-2xl"
+            styles={{
+              body: { backgroundColor: "#090d16", padding: "16px 4px 4px 4px" },
+              mask: { backdropFilter: "blur(4px)" }
+            }}
+          >
+            <div className="space-y-5 text-slate-300">
+              <div className="bg-slate-900/40 p-4 rounded-xl border border-slate-800/80 shadow-inner">
+                <h4 className="text-white text-lg font-black tracking-tight">{editSymbol.replace(".NS", "").replace(".BO", "")}</h4>
+                <p className="text-[#9CA3AF] text-[10px] font-bold uppercase tracking-wider">Mid-Trade Trigger Adjustment</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-slate-400 text-xs font-semibold uppercase tracking-wider">Target Price (₹) — Auto Sell</label>
+                <InputNumber
+                  min={0}
+                  value={editTarget || null}
+                  onChange={(val) => setEditTarget(val || 0)}
+                  formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
+                  parser={(value) => value ? parseFloat(value.replace(/₹\s?|(,*)/g, "")) : 0}
+                  className="w-full font-bold"
+                  size="large"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-slate-400 text-xs font-semibold uppercase tracking-wider">Stop Loss (₹) — Auto Sell</label>
+                <InputNumber
+                  min={0}
+                  value={editStop || null}
+                  onChange={(val) => setEditStop(val || 0)}
+                  formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
+                  parser={(value) => value ? parseFloat(value.replace(/₹\s?|(,*)/g, "")) : 0}
+                  className="w-full font-bold"
+                  size="large"
+                />
+              </div>
+
+              {editError && (
+                <p className="text-xs text-rose-400 font-medium animate-pulse">{editError}</p>
+              )}
+
+              <div className="flex gap-3 pt-3">
+                <Button
+                  onClick={() => setEditModalOpen(false)}
+                  className="flex-1 !bg-slate-900/40 !border-slate-800 !text-slate-400 hover:!text-white hover:!bg-slate-800/40 hover:!border-slate-700 transition-all duration-200"
+                  size="large"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="primary"
+                  onClick={async () => {
+                    setEditLoading(true);
+                    setEditError(null);
+                    try {
+                      const success = await updatePortfolioThresholds(
+                        effectiveUserId,
+                        editSymbol,
+                        editTarget > 0 ? editTarget : null,
+                        editStop > 0 ? editStop : null
+                      );
+                      if (success) {
+                        setEditModalOpen(false);
+                        await loadData();
+                      } else {
+                        setEditError("Failed to update thresholds.");
+                      }
+                    } catch (err: any) {
+                      setEditError(err.message || "Failed to update thresholds.");
+                    } finally {
+                      setEditLoading(false);
+                    }
+                  }}
+                  loading={editLoading}
+                  className="flex-1 !bg-gradient-to-r !from-emerald-500 !to-teal-600 hover:!from-emerald-400 hover:!to-teal-500 !border-none !font-black !text-white tracking-wide shadow-lg hover:shadow-emerald-500/20 transition-all duration-200"
+                  size="large"
+                >
+                  SAVE TRIGGERS 💾
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        </ConfigProvider>
+      )}
     </div>
   );
 }

@@ -335,6 +335,23 @@ export async function sellHolding(
   });
 }
 
+export async function updatePortfolioThresholds(
+  userId: string,
+  symbol: string,
+  targetPrice: number | null,
+  stopLoss: number | null
+) {
+  return fetchJson<{ success: boolean }>("/api/user/portfolio/update_thresholds", {
+    method: "POST",
+    body: JSON.stringify({
+      user_id: userId,
+      symbol,
+      target_price: targetPrice,
+      stop_loss: stopLoss,
+    }),
+  });
+}
+
 export async function getUserPassbook(userId: string) {
   return fetchJson<PassbookResponse>(`/api/user/passbook?user_id=${userId}`);
 }

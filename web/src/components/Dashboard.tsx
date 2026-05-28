@@ -24,6 +24,7 @@ import AlphaAlerts from "./AlphaAlerts";
 import { KPIDashboard } from "./KPIDashboard";
 import { ModuleNavigation } from "./ModuleNavigation";
 import { createClient } from "@/lib/supabase/client";
+import { BuyStockModal } from "./BuyStockModal";
 
 type PermissionSet = {
   can_view_charts: boolean;
@@ -78,6 +79,21 @@ export function Dashboard() {
   const [chatbotPrefill, setChatbotPrefill] = useState<ChatbotPrefill | null>(null);
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
   const [impersonatedId, setImpersonatedId] = useState<string | null>(null);
+
+  // Buy Modal State for Signals
+  const [buyModalOpen, setBuyModalOpen] = useState(false);
+  const [buyModalSymbol, setBuyModalSymbol] = useState("");
+  const [buyModalPrice, setBuyModalPrice] = useState(0);
+  const [buyModalTarget, setBuyModalTarget] = useState<number | null>(null);
+  const [buyModalStop, setBuyModalStop] = useState<number | null>(null);
+
+  const handleBuyFromSignal = (symbol: string, price: number, target: number | null, stop: number | null) => {
+    setBuyModalSymbol(symbol);
+    setBuyModalPrice(price);
+    setBuyModalTarget(target);
+    setBuyModalStop(stop);
+    setBuyModalOpen(true);
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -336,7 +352,7 @@ export function Dashboard() {
                 </SegmentButton>
               </div>
             </div>
-            <SignalList signals={filteredSignals} />
+            <SignalList signals={filteredSignals} onBuyClick={handleBuyFromSignal} />
           </section>
         )
       ) : activeTab === "backtest" ? (
@@ -360,6 +376,20 @@ export function Dashboard() {
           onAnalyzeHolding={handleAnalyzeHoldingFromPortfolio}
           onAnalyzeEntirePortfolio={handleAnalyzeEntirePortfolioFromPortfolio}
           canUseChatbot={permissions.can_use_chatbot === true}
+        />
+      )}
+
+      {buyModalSymbol && (
+        <BuyStockModal
+          open={buyModalOpen}
+          onCancel={() => setBuyModalOpen(false)}
+          onSuccess={() => setBuyModalOpen(false)}
+          symbol={buyModalSymbol}
+          displaySymbol={buyModalSymbol.replace(".NS", "").replace(".BO", "")}
+          defaultPrice={buyModalPrice}
+          defaultTarget={buyModalTarget}
+          defaultStopLoss={buyModalStop}
+          userId={impersonatedId || sessionUser?.id || "default-trader-admin"}
         />
       )}
     </>

@@ -116,6 +116,13 @@ class PortfolioBuyRequest(BaseModel):
     stop_loss: float | None = None
 
 
+class PortfolioThresholdUpdateRequest(BaseModel):
+    user_id: str
+    symbol: str
+    target_price: float | None = None
+    stop_loss: float | None = None
+
+
 class PortfolioSellRequest(BaseModel):
     user_id: str
     symbol: str
@@ -954,6 +961,21 @@ def sell_holding_endpoint(req: PortfolioSellRequest):
             req.quantity,
             req.sell_price,
             "manual"
+        )
+        return {"success": success}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/user/portfolio/update_thresholds")
+def update_thresholds_endpoint(req: PortfolioThresholdUpdateRequest):
+    try:
+        from app.services.user_workspace import update_portfolio_thresholds
+        success = update_portfolio_thresholds(
+            req.user_id,
+            req.symbol,
+            req.target_price,
+            req.stop_loss
         )
         return {"success": success}
     except Exception as exc:

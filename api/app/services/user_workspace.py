@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 USER_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_workspace_cache.json")
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+_IN_MEMORY_USER_CACHE: Dict[str, Any] = {}
 
 
 def _is_valid_uuid(value: str) -> bool:
@@ -22,21 +23,47 @@ def _is_valid_uuid(value: str) -> bool:
 
 
 def _read_local_cache() -> Dict[str, Any]:
+    global _IN_MEMORY_USER_CACHE
+    if _IN_MEMORY_USER_CACHE:
+        return _IN_MEMORY_USER_CACHE
+
+    # Try /tmp fallback cache file first (Vercel runtime environment)
+    tmp_file = "/tmp/user_workspace_cache.json"
+    if os.path.exists(tmp_file):
+        try:
+            with open(tmp_file, "r") as f:
+                data = json.load(f)
+                _IN_MEMORY_USER_CACHE = data
+                return data
+        except Exception:
+            pass
+
     if not os.path.exists(USER_CACHE_FILE):
-        return {"user_watchlists": {}, "user_portfolios": {}}
+        return {"user_watchlists": {}, "user_portfolios": {}, "user_passbook": {}}
     try:
         with open(USER_CACHE_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            _IN_MEMORY_USER_CACHE = data
+            return data
     except Exception:
-        return {"user_watchlists": {}, "user_portfolios": {}}
+        return {"user_watchlists": {}, "user_portfolios": {}, "user_passbook": {}}
 
 
 def _write_local_cache(data: Dict[str, Any]) -> None:
+    global _IN_MEMORY_USER_CACHE
+    _IN_MEMORY_USER_CACHE = data
+    # 1. Try writing to original settings file
     try:
         with open(USER_CACHE_FILE, "w") as f:
             json.dump(data, f, indent=2)
-    except Exception as exc:
-        logger.error(f"Failed to write user workspace cache: {exc}")
+    except Exception as main_exc:
+        # 2. Try writing to /tmp folder in read-only environment
+        try:
+            tmp_file = "/tmp/user_workspace_cache.json"
+            with open(tmp_file, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as tmp_exc:
+            logger.error(f"Failed to write user workspace cache fallback to /tmp: {tmp_exc} | Local write failed: {main_exc}")
 
 
 def _split_symbol(symbol: str) -> Tuple[str, str]:
@@ -581,4 +608,40 @@ def reconcile_active_triggers(user_id: str) -> Dict[str, Any]:
         "triggered_count": len(triggered),
         "triggered": triggered,
     }
+
+
+def update_portfolio_thresholds(
+    user_id: str,
+    symbol: str,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None
+) -> bool:
+    """Update target price and stop loss thresholds for an active portfolio holding."""
+    norm_sym = normalize_symbol(symbol)
+    client = get_client()
+    use_supabase = client and _is_valid_uuid(user_id)
+
+    if use_supabase:
+        try:
+            client.table("user_portfolios").update({
+                "target_price": target_price,
+                "stop_loss": stop_loss,
+            }).eq("user_id", user_id).eq("symbol", norm_sym).execute()
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to update portfolio thresholds on Supabase: {exc}")
+            raise exc
+
+    # Local cache fallback
+    cache = _read_local_cache()
+    if "user_portfolios" in cache and user_id in cache["user_portfolios"]:
+        for item in cache["user_portfolios"][user_id]:
+            if item["symbol"] == norm_sym:
+                item["target_price"] = target_price
+                item["stop_loss"] = stop_loss
+                break
+        _write_local_cache(cache)
+        return True
+    return False
+
 
