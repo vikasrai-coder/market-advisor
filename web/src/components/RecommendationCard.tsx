@@ -4,8 +4,14 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { type Recommendation, getStockDetail } from "@/lib/api";
 import { BuyStockModal } from "./BuyStockModal";
+import { createClient } from "@/lib/supabase/client";
 
-export function RecommendationCard({ rec }: { rec: Recommendation }) {
+interface RecommendationCardProps {
+  rec: Recommendation;
+  userId?: string;
+}
+
+export function RecommendationCard({ rec, userId: propUserId }: RecommendationCardProps) {
   const stock = rec.stocks;
   const mode = rec.trade_mode || "swing";
 
@@ -14,11 +20,26 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
   const [userId, setUserId] = useState<string>("test-trader-1");
 
   useEffect(() => {
-    const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
-    if (storedId) {
-      setUserId(storedId);
+    if (propUserId) {
+      setUserId(propUserId);
+      return;
     }
-  }, []);
+    async function loadUser() {
+      const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
+      if (storedId) {
+        setUserId(storedId);
+        return;
+      }
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getUser();
+        if (data?.user?.id) {
+          setUserId(data.user.id);
+        }
+      } catch {}
+    }
+    loadUser();
+  }, [propUserId]);
 
   const handleOpenBuy = async (e: React.MouseEvent) => {
     e.preventDefault();

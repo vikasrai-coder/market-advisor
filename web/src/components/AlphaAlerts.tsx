@@ -35,6 +35,7 @@ import {
   type AlphaPerformance,
 } from "@/lib/api";
 import { BuyStockModal } from "./BuyStockModal";
+import { createClient } from "@/lib/supabase/client";
 
 
 // ── Cap segment badge colors ────────────────────────────────────────────
@@ -46,7 +47,7 @@ const CAP_COLORS: Record<string, { bg: string; text: string; border: string }> =
     unknown: { bg: "#374151", text: "#9CA3AF", border: "#6B7280" },
   };
 
-export default function AlphaAlerts() {
+export default function AlphaAlerts({ userId: propUserId }: { userId?: string }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [alerts, setAlerts] = useState<AlphaAlert[]>([]);
   const [performance, setPerformance] = useState<AlphaPerformance | null>(null);
@@ -193,7 +194,7 @@ export default function AlphaAlerts() {
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {alerts.map((alert) => (
-              <AlertCard key={alert.id} alert={alert} />
+              <AlertCard key={alert.id} alert={alert} userId={propUserId} />
             ))}
           </div>
         </>
@@ -367,7 +368,7 @@ function MetricCard({
   );
 }
 
-function AlertCard({ alert }: { alert: AlphaAlert }) {
+function AlertCard({ alert, userId: propUserId }: { alert: AlphaAlert; userId?: string }) {
   const cap = CAP_COLORS[alert.cap_segment] || CAP_COLORS.unknown;
   const confidencePct = Math.round(alert.confidence * 100);
 
@@ -375,11 +376,26 @@ function AlertCard({ alert }: { alert: AlphaAlert }) {
   const [userId, setUserId] = useState<string>("test-trader-1");
 
   useEffect(() => {
-    const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
-    if (storedId) {
-      setUserId(storedId);
+    if (propUserId) {
+      setUserId(propUserId);
+      return;
     }
-  }, []);
+    async function loadUser() {
+      const storedId = localStorage.getItem("offline_user_id") || sessionStorage.getItem("impersonated_id");
+      if (storedId) {
+        setUserId(storedId);
+        return;
+      }
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getUser();
+        if (data?.user?.id) {
+          setUserId(data.user.id);
+        }
+      } catch {}
+    }
+    loadUser();
+  }, [propUserId]);
 
   const rewardRisk = alert.stop_pct > 0
     ? (alert.target_pct / alert.stop_pct).toFixed(1)

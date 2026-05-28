@@ -314,7 +314,7 @@ export function Dashboard() {
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
       ) : activeTab === "alpha" && sessionUser?.role === "admin" && !impersonatedEmail ? (
-        <AlphaAlerts />
+        <AlphaAlerts userId={impersonatedId || sessionUser?.id || "default-trader-admin"} />
       ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <PennyScans />
       ) : activeTab === "scans" ? (
@@ -334,6 +334,7 @@ export function Dashboard() {
             onChangeTargetDate={setTargetDate}
             onComplete={load}
             onLoadingChange={setLoading}
+            userId={impersonatedId || sessionUser?.id || "default-trader-admin"}
           />
         )
       ) : activeTab === "signals" ? (
@@ -409,6 +410,7 @@ function ScanWorkspace({
   onChangeTargetDate,
   onComplete,
   onLoadingChange,
+  userId,
 }: {
   mode: TradeMode;
   targetDate: string;
@@ -422,6 +424,7 @@ function ScanWorkspace({
   onChangeTargetDate: (date: string) => void;
   onComplete: () => void;
   onLoadingChange: (loading: boolean) => void;
+  userId?: string;
 }) {
   return (
     <>
@@ -471,7 +474,11 @@ function ScanWorkspace({
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {recs.map((rec) => (
-              <RecommendationCard key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`} rec={rec} />
+              <RecommendationCard
+                key={rec.id ?? `${rec.symbol}-${rec.rank}-${rec.trade_date}`}
+                rec={rec}
+                userId={userId}
+              />
             ))}
           </div>
         )}
