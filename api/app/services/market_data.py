@@ -56,7 +56,14 @@ def fetch_news(symbol: str, limit: int = 8) -> list[dict[str, Any]]:
     symbol = normalize_symbol(symbol)
     ticker = yf.Ticker(symbol)
     articles: list[dict[str, Any]] = []
-    for item in (ticker.news or [])[:limit]:
+    
+    # 1. Fetch from yfinance
+    try:
+        yf_news = ticker.news or []
+    except Exception:
+        yf_news = []
+        
+    for item in yf_news[:limit]:
         articles.append(
             {
                 "symbol": symbol,
@@ -67,7 +74,28 @@ def fetch_news(symbol: str, limit: int = 8) -> list[dict[str, Any]]:
                 "published_at": _ts(item.get("providerPublishTime") or item.get("published")),
             }
         )
-    return articles
+        
+    # 2. Fallback to Google News if fewer than 3 articles fetched
+    if len(articles) < 3:
+        try:
+            from app.services.google_news import fetch_google_news_rss
+            query_term = f"{display_symbol(symbol)} stock news"
+            google_articles = fetch_google_news_rss(query_term, limit=limit - len(articles))
+            for item in google_articles:
+                articles.append(
+                    {
+                        "symbol": symbol,
+                        "title": item["title"],
+                        "summary": item["summary"],
+                        "url": item["url"],
+                        "source": item["source"],
+                        "published_at": item["published_at"],
+                    }
+                )
+        except Exception:
+            pass
+            
+    return articles[:limit]
 
 
 def _ts(value: Any) -> str | None:

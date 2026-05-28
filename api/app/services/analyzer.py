@@ -63,9 +63,26 @@ def run_full_analysis(
         supabase_store.clear_recommendations_for_date(client, signal_date, trade_mode=mode)
         supabase_store.clear_signals_for_date(client, signal_date, trade_mode=mode)
 
+    # Fetch general market news to assess macro risk / NIFTY conditions
+    macro_articles = []
+    macro_sentiment_score = 50.0
+    macro_headlines = ""
+    try:
+        from app.services.google_news import fetch_google_news_rss
+        macro_articles = fetch_google_news_rss("NIFTY 50", limit=5)
+        if macro_articles:
+            macro_sentiment_score = hf_ai.score_news_batch(macro_articles)
+            macro_headlines = " | ".join(a.get("title", "") for a in macro_articles[:3])
+    except Exception as exc:
+        print(f"Error fetching macro/NIFTY news: {exc}")
+
     symbols = market_data.get_watchlist()
     total_symbols = len(symbols)
-    report(0, total_symbols, "scanning", f"[{cfg.label}] Scanning {total_symbols} NSE stocks…")
+    
+    if macro_articles:
+        report(0, total_symbols, "scanning", f"[{cfg.label}] Macro sentiment scored {macro_sentiment_score:.0f}/100. Scanning {total_symbols} NSE stocks…")
+    else:
+        report(0, total_symbols, "scanning", f"[{cfg.label}] Scanning {total_symbols} NSE stocks…")
 
     # 1. Fetch DB cached stock profiles in one query to avoid slow sequential ticker.info calls
     db_profiles = {}
@@ -114,7 +131,8 @@ def run_full_analysis(
                 cfg, 
                 db_profiles.get(symbol), 
                 bulk_history.get(symbol),
-                [] # Start with empty news to save 90 HTTP news calls
+                [], # Start with empty news to save 90 HTTP news calls
+                macro_sentiment_score
             ): symbol
             for symbol in symbols
             if bulk_history.get(symbol) is not None  # skip delisted/missing symbols
@@ -170,6 +188,10 @@ def run_full_analysis(
                 + fundamental * cfg.weight_fundamental,
                 2,
             )
+            if macro_sentiment_score < 45:
+                macro_modifier = (macro_sentiment_score - 50.0) * 0.4
+                composite = round(composite + macro_modifier, 2)
+                
             item["news_score"] = 50.0
             item["composite_score"] = composite
             item["news_rows"] = []
@@ -204,6 +226,9 @@ def run_full_analysis(
                 + fundamental * cfg.weight_fundamental,
                 2,
             )
+            if macro_sentiment_score < 45:
+                macro_modifier = (macro_sentiment_score - 50.0) * 0.4
+                composite = round(composite + macro_modifier, 2)
             
             item["news_score"] = round(news_score, 2)
             item["composite_score"] = composite
@@ -242,14 +267,20 @@ def run_full_analysis(
         if run_lightweight:
             # Quick local rule-based generation to save API roundtrip & CPU billing on Vercel
             display = item["profile"].get("display_symbol") or item["symbol"].replace(".NS", "")
+            reasoning = f"{display} ({item['profile'].get('sector') or 'NSE'}) scores {item['composite_score']:.0f}/100. RSI is at {item['metrics'].get('rsi', 50):.1f} with active technical momentum."
+            key_factors = [
+                "Technical crossovers and volume momentum",
+                f"Sector: {item['profile'].get('sector') or 'N/A'}",
+                "Rule-based quant filter passed",
+            ]
+            if macro_sentiment_score < 45:
+                reasoning += f" Warning: Bearish NIFTY news sentiment ({macro_sentiment_score:.0f}/100) suggests high risk of gap-down opening."
+                key_factors.append("Bearish macro environment warning")
+                
             insight = {
-                "reasoning": f"{display} ({item['profile'].get('sector') or 'NSE'}) scores {item['composite_score']:.0f}/100. RSI is at {item['metrics'].get('rsi', 50):.1f} with active technical momentum.",
+                "reasoning": reasoning,
                 "confidence": min(0.95, item["composite_score"] / 100),
-                "key_factors": [
-                    "Technical crossovers and volume momentum",
-                    f"Sector: {item['profile'].get('sector') or 'N/A'}",
-                    "Rule-based quant filter passed",
-                ]
+                "key_factors": key_factors
             }
             return rank, item, insight
 
@@ -260,13 +291,21 @@ def run_full_analysis(
                 item["metrics"],
                 item["news_score"],
                 item["composite_score"],
+                macro_sentiment=macro_sentiment_score,
+                macro_headlines=macro_headlines,
             )
         except Exception:
             display = item["profile"].get("display_symbol") or item["symbol"].replace(".NS", "")
+            reasoning = f"{display} (NSE) scores {item['composite_score']:.0f}/100 with bullish technical crossovers."
+            key_factors = ["Technical momentum"]
+            if macro_sentiment_score < 45:
+                reasoning += " Warning: Bearish global macro sentiment, expect overnight gap-down volatility."
+                key_factors.append("Geopolitical and global market volatility warning")
+                
             insight = {
-                "reasoning": f"{display} (NSE) scores {item['composite_score']:.0f}/100 with bullish technical crossovers.",
+                "reasoning": reasoning,
                 "confidence": min(0.95, item["composite_score"] / 100),
-                "key_factors": ["Technical momentum"]
+                "key_factors": key_factors
             }
         return rank, item, insight
 
@@ -335,6 +374,7 @@ def run_full_analysis(
                 "pe_ratio": item["metrics"].get("pe_ratio"),
                 "dividend_yield": item["metrics"].get("dividend_yield"),
                 "is_undervalued": is_undervalued,
+                "overnight_gap_down_warning": macro_sentiment_score < 30,
                 "stocks": {
                     "name": item["profile"].get("name"),
                     "sector": item["profile"].get("sector"),
@@ -451,16 +491,17 @@ def _analyze_symbol_dispatch(
     cfg: ScanConfig, 
     db_profile: dict[str, Any] | None = None,
     history_df: Any = None,
-    news_articles: list[dict[str, Any]] | None = None
+    news_articles: list[dict[str, Any]] | None = None,
+    macro_sentiment_score: float = 50.0,
 ) -> dict[str, Any]:
     """Route to the mode-appropriate symbol analyzer."""
     if cfg.mode == "intraday":
-        return _analyze_symbol_intraday(symbol, cfg, db_profile, history_df, news_articles)
+        return _analyze_symbol_intraday(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score)
     elif cfg.mode == "longterm":
-        return _analyze_symbol_longterm(symbol, cfg, db_profile, history_df, news_articles)
+        return _analyze_symbol_longterm(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score)
     else:
         # swing + future use the same analysis
-        return _analyze_symbol_swing(symbol, cfg, db_profile, history_df, news_articles)
+        return _analyze_symbol_swing(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score)
 
 
 def _analyze_symbol_swing(
@@ -468,7 +509,8 @@ def _analyze_symbol_swing(
     cfg: ScanConfig, 
     db_profile: dict[str, Any] | None = None,
     history_df: Any = None,
-    news_articles: list[dict[str, Any]] | None = None
+    news_articles: list[dict[str, Any]] | None = None,
+    macro_sentiment_score: float = 50.0,
 ) -> dict[str, Any]:
     """Original daily analysis — swing + future modes."""
     profile = db_profile if db_profile is not None else market_data.fetch_stock_profile(symbol)
@@ -489,6 +531,9 @@ def _analyze_symbol_swing(
         trend * cfg.weight_trend + technical * cfg.weight_technical + news_score * cfg.weight_news,
         2,
     )
+    if macro_sentiment_score < 45:
+        macro_modifier = (macro_sentiment_score - 50.0) * 0.4
+        composite = round(composite + macro_modifier, 2)
 
     return {
         "symbol": symbol,
@@ -505,7 +550,8 @@ def _analyze_symbol_intraday(
     cfg: ScanConfig, 
     db_profile: dict[str, Any] | None = None,
     history_df: Any = None,
-    news_articles: list[dict[str, Any]] | None = None
+    news_articles: list[dict[str, Any]] | None = None,
+    macro_sentiment_score: float = 50.0,
 ) -> dict[str, Any]:
     """60-min candle analysis for intraday trading."""
     profile = db_profile if db_profile is not None else market_data.fetch_stock_profile(symbol)
@@ -526,6 +572,9 @@ def _analyze_symbol_intraday(
         trend * cfg.weight_trend + technical * cfg.weight_technical + news_score * cfg.weight_news,
         2,
     )
+    if macro_sentiment_score < 45:
+        macro_modifier = (macro_sentiment_score - 50.0) * 0.4
+        composite = round(composite + macro_modifier, 2)
 
     return {
         "symbol": symbol,
@@ -542,7 +591,8 @@ def _analyze_symbol_longterm(
     cfg: ScanConfig, 
     db_profile: dict[str, Any] | None = None,
     history_df: Any = None,
-    news_articles: list[dict[str, Any]] | None = None
+    news_articles: list[dict[str, Any]] | None = None,
+    macro_sentiment_score: float = 50.0,
 ) -> dict[str, Any]:
     """1-year daily analysis with fundamental scoring for long-term holds."""
     profile = db_profile if db_profile is not None else market_data.fetch_stock_profile(symbol)
@@ -567,6 +617,9 @@ def _analyze_symbol_longterm(
         + fundamental * cfg.weight_fundamental,
         2,
     )
+    if macro_sentiment_score < 45:
+        macro_modifier = (macro_sentiment_score - 50.0) * 0.4
+        composite = round(composite + macro_modifier, 2)
 
     return {
         "symbol": symbol,

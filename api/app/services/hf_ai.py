@@ -136,17 +136,24 @@ def generate_recommendation_insight(
     metrics: dict[str, Any],
     news_score: float,
     composite: float,
+    macro_sentiment: float | None = None,
+    macro_headlines: str | None = None,
 ) -> dict[str, Any]:
-    """LLM reasoning via Hugging Face router + FinBERT sentiment."""
+    """LLM reasoning via Hugging Face router + FinBERT sentiment with macro NIFTY overlay."""
     display = profile.get("display_symbol") or symbol.replace(".NS", "")
     currency = profile.get("currency") or "INR"
+    
+    reasoning_text = (
+        f"{display} (NSE) scores {composite:.0f}/100: trend {metrics.get('trend_score', 50):.0f}, "
+        f"technicals {metrics.get('technical_score', 50):.0f}, news {news_score:.0f}."
+    )
+    if macro_sentiment is not None and macro_sentiment < 40:
+        reasoning_text += " Warning: Bearish global macro sentiment, expect overnight gap-down volatility."
+    else:
+        reasoning_text += f" RSI {metrics.get('rsi')}, price vs SMA20/SMA50 supports {'bullish' if (metrics.get('trend_score') or 0) >= 55 else 'mixed'} bias."
+        
     fallback = {
-        "reasoning": (
-            f"{display} (NSE) scores {composite:.0f}/100: trend {metrics.get('trend_score', 50):.0f}, "
-            f"technicals {metrics.get('technical_score', 50):.0f}, news {news_score:.0f}. "
-            f"RSI {metrics.get('rsi')}, price vs SMA20/SMA50 supports "
-            f"{'bullish' if (metrics.get('trend_score') or 0) >= 55 else 'mixed'} bias."
-        ),
+        "reasoning": reasoning_text,
         "confidence": min(0.95, composite / 100),
         "key_factors": [
             "Price trend vs moving averages",
@@ -155,19 +162,30 @@ def generate_recommendation_insight(
             f"Sector: {profile.get('sector') or 'N/A'}",
         ],
     }
+    if macro_sentiment is not None and macro_sentiment < 40:
+        fallback["key_factors"].append("Geopolitical and global market volatility warning")
+        
     if not settings.hf_token:
         return fallback
-
+ 
     prompt = f"""You are an experienced Indian equity analyst (NSE). Analyze {display} ({symbol}) for a BUY recommendation.
-
+ 
 Company: {profile.get('name')} | Exchange: {profile.get('exchange', 'NSE')} | Sector: {profile.get('sector')} | P/E: {profile.get('pe_ratio')}
 Price: {currency} {metrics.get('price')} | Change: {metrics.get('change_pct')}% | RSI: {metrics.get('rsi')}
 Trend score: {metrics.get('trend_score')}/100 | Technical: {metrics.get('technical_score')}/100
-News sentiment score: {news_score}/100 | Composite: {composite}/100
+News sentiment score: {news_score}/100 | Composite: {composite}/100"""
 
+    if macro_headlines:
+        prompt += f"""
+Macro/Market News: {macro_headlines}
+Global/Market News Sentiment: {macro_sentiment}/100
+Note: Weave in geopolitical/global events (e.g. US-Iran strikes, Nifty crashes) and warn about potential gap-down openings or risk warnings in your reasoning if the market sentiment is bearish (score < 40)."""
+
+    prompt += f"""
+ 
 Reply ONLY with valid JSON:
 {{"reasoning": "2-3 sentences", "confidence": 0.0-1.0, "key_factors": ["factor1", "factor2", "factor3"]}}"""
-
+ 
     content = _chat(prompt, max_tokens=400, temperature=0.3)
     if content:
         parsed = _extract_json(content)
