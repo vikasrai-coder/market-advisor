@@ -7,6 +7,7 @@ import {
   UserOutlined,
   BellOutlined,
   SettingOutlined,
+  FolderOpenOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
@@ -35,6 +36,11 @@ export function AuthHeader({
   };
 
   const userMenuItems = [
+    {
+      key: "portfolio",
+      label: <Link href="/portfolio">My Portfolio</Link>,
+      icon: <FolderOpenOutlined />,
+    },
     {
       key: "profile",
       label: "Profile",
@@ -110,6 +116,14 @@ export function AuthHeader({
             }`}
           >
             Buy / Sell Signals
+          </Link>
+          <Link
+            href="/portfolio"
+            className={`transition-colors ${
+              pathname === "/portfolio" ? "text-[#10B981] font-bold" : "text-[#9CA3AF] hover:text-white"
+            }`}
+          >
+            My Portfolio
           </Link>
           <Link
             href="/strategies"

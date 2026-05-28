@@ -80,6 +80,26 @@ export function Dashboard() {
   const [impersonatedId, setImpersonatedId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab") as DashboardTab;
+      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "admin"].includes(tab)) {
+        setActiveTab(tab);
+      }
+
+      const storedPrefill = sessionStorage.getItem("chatbot_prefill");
+      if (storedPrefill) {
+        try {
+          setChatbotPrefill(JSON.parse(storedPrefill));
+          sessionStorage.removeItem("chatbot_prefill");
+        } catch (e) {
+          console.error("Failed to parse chatbot prefill:", e);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     async function loadSession() {
       try {
         let userId = "";
