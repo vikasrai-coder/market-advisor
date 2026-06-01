@@ -62,6 +62,12 @@ def upsert_stock(client: Client, data: dict[str, Any]) -> None:
     client.table("stocks").upsert(_pick(data, STOCK_COLUMNS)).execute()
 
 
+def upsert_stocks(client: Client, data_list: list[dict[str, Any]]) -> None:
+    if data_list:
+        cleaned = [_pick(d, STOCK_COLUMNS) for d in data_list]
+        client.table("stocks").upsert(cleaned).execute()
+
+
 def insert_news(client: Client, rows: list[dict[str, Any]]) -> None:
     if rows:
         cleaned = [_pick(r, NEWS_COLUMNS) for r in rows]
@@ -70,6 +76,12 @@ def insert_news(client: Client, rows: list[dict[str, Any]]) -> None:
 
 def insert_metrics(client: Client, row: dict[str, Any]) -> None:
     client.table("stock_metrics").insert(_pick(row, METRIC_COLUMNS)).execute()
+
+
+def insert_metrics_batch(client: Client, rows: list[dict[str, Any]]) -> None:
+    if rows:
+        cleaned = [_pick(r, METRIC_COLUMNS) for r in rows]
+        client.table("stock_metrics").insert(cleaned).execute()
 
 
 def clear_recommendations_for_date(client: Client, signal_date: date, trade_mode: str | None = None) -> None:

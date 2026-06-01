@@ -824,8 +824,8 @@ def vercel_cron_endpoint(
 ):
     """Automated daily cron trigger for Vercel Serverless deployments.
 
-    Fires the swing analysis in a background thread and returns 202 immediately
-    so cron-job.org never sees a 30-second timeout.
+    Fires the swing analysis synchronously on Vercel to guarantee completion
+    and prevent container freezing, or in a background task locally.
     """
     cron_secret = os.getenv("CRON_SECRET")
     if cron_secret:
@@ -844,14 +844,24 @@ def vercel_cron_endpoint(
         except Exception:
             pass
 
-    background_tasks.add_task(_run_daily)
-    return JSONResponse(
-        status_code=202,
-        content={
-            "status": "accepted",
-            "message": "Daily swing analysis triggered in background.",
-        },
-    )
+    if IS_VERCEL:
+        _run_daily()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Daily swing analysis completed synchronously on Vercel.",
+            },
+        )
+    else:
+        background_tasks.add_task(_run_daily)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "accepted",
+                "message": "Daily swing analysis triggered in background.",
+            },
+        )
 
 
 @app.get("/api/cron/intraday")
@@ -861,8 +871,8 @@ def vercel_intraday_cron_endpoint(
 ):
     """Automated intraday cron trigger for Vercel Serverless deployments (Weekday Market Hours).
 
-    Fires the intraday analysis in a background thread and returns 202 immediately
-    so cron-job.org never sees a 30-second timeout.
+    Fires the intraday analysis synchronously on Vercel to guarantee completion
+    and prevent container freezing, or in a background task locally.
     """
     cron_secret = os.getenv("CRON_SECRET")
     if cron_secret:
@@ -876,14 +886,24 @@ def vercel_intraday_cron_endpoint(
         except Exception:
             pass
 
-    background_tasks.add_task(_run_intraday)
-    return JSONResponse(
-        status_code=202,
-        content={
-            "status": "accepted",
-            "message": "Intraday analysis triggered in background.",
-        },
-    )
+    if IS_VERCEL:
+        _run_intraday()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Intraday analysis completed synchronously on Vercel.",
+            },
+        )
+    else:
+        background_tasks.add_task(_run_intraday)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "accepted",
+                "message": "Intraday analysis triggered in background.",
+            },
+        )
 
 
 @app.post("/api/watchlist/sync")

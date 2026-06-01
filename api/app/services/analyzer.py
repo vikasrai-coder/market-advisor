@@ -426,21 +426,57 @@ def run_full_analysis(
 
     if client:
         report(total_symbols, total_symbols, "saving", "Saving to Supabase…")
-        for item in scored:
-            supabase_store.upsert_stock(client, item["profile"])
-            supabase_store.insert_metrics(
-                client,
-                {
-                    "symbol": item["symbol"],
-                    **{k: item["metrics"].get(k) for k in (
-                        "price", "change_pct", "volume", "rsi", "macd", "macd_signal",
-                        "sma_20", "sma_50", "trend_score", "volatility",
-                    )},
-                },
-            )
+        
+        # Bulk upsert stocks
+        profiles = [item["profile"] for item in scored]
+        try:
+            supabase_store.upsert_stocks(client, profiles)
+        except Exception as e:
+            print(f"Failed to bulk upsert stocks: {e}. Falling back to sequential.")
+            for profile in profiles:
+                try:
+                    supabase_store.upsert_stock(client, profile)
+                except Exception:
+                    pass
+
+        # Bulk insert metrics
+        metrics_rows = [
+            {
+                "symbol": item["symbol"],
+                **{k: item["metrics"].get(k) for k in (
+                    "price", "change_pct", "volume", "rsi", "macd", "macd_signal",
+                    "sma_20", "sma_50", "trend_score", "volatility",
+                )},
+            }
+            for item in scored
+        ]
+        try:
+            supabase_store.insert_metrics_batch(client, metrics_rows)
+        except Exception as e:
+            print(f"Failed to bulk insert metrics: {e}. Falling back to sequential.")
+            for row in metrics_rows:
+                try:
+                    supabase_store.insert_metrics(client, row)
+                except Exception:
+                    pass
+
+        # Bulk insert news
+        all_news_rows = []
         for item in top_buys:
             if item.get("news_rows"):
-                supabase_store.insert_news(client, item["news_rows"])
+                all_news_rows.extend(item["news_rows"])
+        if all_news_rows:
+            try:
+                supabase_store.insert_news(client, all_news_rows)
+            except Exception as e:
+                print(f"Failed to bulk insert news: {e}. Falling back to sequential.")
+                for item in top_buys:
+                    if item.get("news_rows"):
+                        try:
+                            supabase_store.insert_news(client, item["news_rows"])
+                        except Exception:
+                            pass
+
         supabase_store.insert_recommendations(client, recommendations)
         supabase_store.insert_signals(client, signals)
         if run_id:
