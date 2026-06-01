@@ -970,6 +970,31 @@ def remove_from_watchlist_endpoint(req: WatchlistActionRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/portfolio/health/{symbol}")
+def get_position_health(symbol: str, entry_price: float, stop_loss: float, target_price: float, trade_mode: str = "swing"):
+    try:
+        from app.services.position_monitor import check_position_health
+        import yfinance as yf
+        from app.services.user_workspace import normalize_symbol
+        norm_sym = normalize_symbol(symbol)
+        ticker = yf.Ticker(norm_sym)
+        period = "60d" if trade_mode != "intraday" else "5d"
+        interval = "1d" if trade_mode != "intraday" else "60m"
+        history = ticker.history(period=period, interval=interval)
+        
+        health_analysis = check_position_health(
+            symbol=norm_sym,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
+            trade_mode=trade_mode,
+            df=history
+        )
+        return health_analysis
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/user/portfolio")
 def get_portfolio_endpoint(user_id: str):
     try:

@@ -13,6 +13,7 @@ def compute_indicators(history: pd.DataFrame) -> dict[str, float | None]:
     macd_line, signal_line = _macd(close)
     sma_20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
     sma_50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
+    sma_200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else None
     price = float(close.iloc[-1])
     prev = float(close.iloc[-2]) if len(close) > 1 else price
     change_pct = ((price - prev) / prev * 100) if prev else 0.0
@@ -30,6 +31,7 @@ def compute_indicators(history: pd.DataFrame) -> dict[str, float | None]:
         "macd_signal": round(signal_line, 4) if signal_line is not None else None,
         "sma_20": round(float(sma_20), 2) if sma_20 is not None and not np.isnan(sma_20) else None,
         "sma_50": round(float(sma_50), 2) if sma_50 is not None and not np.isnan(sma_50) else None,
+        "sma_200": round(float(sma_200), 2) if sma_200 is not None and not np.isnan(sma_200) else None,
         "trend_score": round(trend_score, 2),
         "volatility": round(vol, 2),
         "technical_score": round(technical_score, 2),
@@ -713,8 +715,6 @@ def _trend_score(
     if rsi is not None:
         if 45 <= rsi <= 65:
             score += 10
-        elif rsi < 30:
-            score += 8
         elif rsi > 70:
             score -= 15
     if macd is not None and signal is not None:
@@ -727,8 +727,6 @@ def _technical_score(rsi: float | None, macd: float | None, signal: float | None
     if rsi is not None:
         if 40 <= rsi <= 60:
             score += 15
-        elif rsi < 35:
-            score += 5
         elif rsi > 75:
             score -= 20
     if macd is not None and signal is not None:
@@ -840,8 +838,6 @@ def _longterm_trend_score(
     if rsi is not None:
         if 40 <= rsi <= 60:
             score += 8
-        elif rsi < 30:
-            score += 12  # deep value
         elif rsi > 80:
             score -= 10
     # Prefer stocks not at extreme highs

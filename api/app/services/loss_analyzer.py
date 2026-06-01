@@ -56,7 +56,7 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
     try:
         result = (
             supabase_client.table("recommendations")
-            .select("performance_status, composite_score, sector, trade_mode, signal_date")
+            .select("performance_status, composite_score, trade_mode, signal_date, symbol, stocks(sector)")
             .neq("performance_status", "pending")
             .gte("signal_date", cutoff)
             .execute()
@@ -87,14 +87,25 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
         "mode_win_rates": {},
     }
 
+    # Helper to parse sector from stocks join
+    def get_sector(r):
+        stocks_data = r.get("stocks")
+        if isinstance(stocks_data, dict):
+            return stocks_data.get("sector")
+        elif isinstance(stocks_data, list) and len(stocks_data) > 0:
+            return stocks_data[0].get("sector")
+        return None
+
     # --- Sector win rate analysis ---
     sector_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
     for r in wins:
-        if r.get("sector"):
-            sector_counts[r["sector"]]["wins"] += 1
+        sec = get_sector(r)
+        if sec:
+            sector_counts[sec]["wins"] += 1
     for r in losses:
-        if r.get("sector"):
-            sector_counts[r["sector"]]["losses"] += 1
+        sec = get_sector(r)
+        if sec:
+            sector_counts[sec]["losses"] += 1
 
     for sector, counts in sector_counts.items():
         total = counts["wins"] + counts["losses"]
