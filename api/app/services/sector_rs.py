@@ -67,6 +67,30 @@ def _normalize_sector(raw_sector: str | None) -> str | None:
     return SECTOR_ALIAS.get(raw_sector.lower().strip())
 
 
+def _safe_get_column(df: pd.DataFrame, col_name: str) -> pd.Series:
+    """Safely extract a column from a DataFrame, handling MultiIndex columns gracefully."""
+    if df.empty:
+        return pd.Series(dtype=float)
+    if col_name in df.columns:
+        res = df[col_name]
+        if isinstance(res, pd.DataFrame):
+            if not res.empty:
+                return res.iloc[:, 0]
+            return pd.Series(dtype=float)
+        return res
+    if isinstance(df.columns, pd.MultiIndex):
+        # Try to find the column at the first level
+        for col in df.columns:
+            if col[0] == col_name:
+                res = df[col]
+                if isinstance(res, pd.DataFrame):
+                    if not res.empty:
+                        return res.iloc[:, 0]
+                    return pd.Series(dtype=float)
+                return res
+    return pd.Series(dtype=float)
+
+
 # ---------------------------------------------------------------------------
 # Enhancement #1 — Sector Relative Strength
 # ---------------------------------------------------------------------------
@@ -105,9 +129,8 @@ def get_sector_relative_strength(sector: str, period_days: int = 20) -> dict[str
             return {"rs_score": 1.0, "status": "neutral", "sector_trend": "unknown",
                     "sector_return_pct": 0.0, "market_return_pct": 0.0}
 
-        close_col = "Close"
-        sector_close = sector_df[close_col].dropna()
-        market_close = market_df[close_col].dropna()
+        sector_close = _safe_get_column(sector_df, "Close").dropna()
+        market_close = _safe_get_column(market_df, "Close").dropna()
 
         if len(sector_close) < 2 or len(market_close) < 2:
             return {"rs_score": 1.0, "status": "neutral", "sector_trend": "unknown",
@@ -188,7 +211,7 @@ def get_market_breadth_signal() -> dict[str, Any]:
                     "nifty_vs_sma20_pct": 0.0, "vix": 15.0, "nifty_daily_return": 0.0,
                     "reasons": []}
 
-        nifty_close = nifty["Close"].dropna()
+        nifty_close = _safe_get_column(nifty, "Close").dropna()
         nifty_price = float(nifty_close.iloc[-1])
         nifty_sma20 = float(nifty_close.rolling(20).mean().iloc[-1])
         nifty_prev = float(nifty_close.iloc[-2]) if len(nifty_close) > 1 else nifty_price
@@ -196,7 +219,7 @@ def get_market_breadth_signal() -> dict[str, Any]:
 
         vix_level = 15.0
         if not vix.empty:
-            vix_close = vix["Close"].dropna()
+            vix_close = _safe_get_column(vix, "Close").dropna()
             if len(vix_close) > 0:
                 vix_level = float(vix_close.iloc[-1])
 

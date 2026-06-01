@@ -178,6 +178,7 @@ def scan_alpha_alerts(
         price = metrics.get("price")
         rsi = metrics.get("rsi")
         vol_spike = metrics.get("volume_spike", False)
+        vol_ratio = metrics.get("volume_ratio", 1.0)
         vwap = metrics.get("vwap")
         bullish_cross = metrics.get("bullish_crossover", False)
 
@@ -193,6 +194,7 @@ def scan_alpha_alerts(
             "vwap": round(vwap, 2) if vwap else None,
             "macd_crossover": bullish_cross,
             "volume_spike": vol_spike,
+            "volume_ratio": round(vol_ratio, 2),
             "cap_segment": profile.get("cap_segment", "unknown"),
             "sector": profile.get("sector", "N/A"),
             "generated_at": datetime.now().isoformat(),
@@ -204,7 +206,7 @@ def scan_alpha_alerts(
             passed_filter = False
         elif rsi is not None and (rsi < cfg["min_rsi"] or rsi > cfg["max_rsi"]):
             passed_filter = False
-        elif cfg["min_volume_spike"] > 1.0 and not vol_spike:
+        elif cfg["min_volume_spike"] > 1.0 and vol_ratio < cfg["min_volume_spike"]:
             passed_filter = False
         elif cfg["require_vwap_above"] and price and vwap and price < vwap:
             passed_filter = False

@@ -75,8 +75,15 @@ def compute_intraday_indicators(history: pd.DataFrame) -> dict[str, float | None
     # Volume spike: current volume vs 20-period average
     vol_sma = volume.rolling(20).mean()
     vol_spike = False
-    if len(vol_sma) > 0 and vol_sma.iloc[-1] and vol_sma.iloc[-1] > 0:
-        vol_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.5
+    vol_ratio = 1.0
+    if len(vol_sma) > 1 and vol_sma.iloc[-2] and vol_sma.iloc[-2] > 0:
+        vol_ratio_last = float(volume.iloc[-1]) / float(vol_sma.iloc[-1]) if vol_sma.iloc[-1] > 0 else 1.0
+        vol_ratio_prev = float(volume.iloc[-2]) / float(vol_sma.iloc[-2])
+        vol_ratio = max(vol_ratio_last, vol_ratio_prev)
+        vol_spike = vol_ratio > 1.5
+    elif len(vol_sma) > 0 and vol_sma.iloc[-1] and vol_sma.iloc[-1] > 0:
+        vol_ratio = float(volume.iloc[-1]) / float(vol_sma.iloc[-1])
+        vol_spike = vol_ratio > 1.5
 
     # SMA 9 / 21 for intraday
     sma_9 = close.rolling(9).mean().iloc[-1] if len(close) >= 9 else None
@@ -98,6 +105,7 @@ def compute_intraday_indicators(history: pd.DataFrame) -> dict[str, float | None
         "bullish_crossover": bullish_cross,
         "bearish_crossover": bearish_cross,
         "volume_spike": vol_spike,
+        "volume_ratio": round(vol_ratio, 2),
         "trend_score": round(trend_score, 2),
         "volatility": round(float(close.pct_change().dropna().std() * 100), 2) if len(close) > 2 else 0.0,
         "technical_score": round(technical_score, 2),
