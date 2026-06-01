@@ -186,3 +186,53 @@ def reconcile_recommendations() -> dict[str, int]:
         "stopped_outs": stopped_outs,
         "remain_pending": remain_pending,
     }
+
+
+def get_performance_stats(supabase_client, trade_mode: str, lookback_days: int = 30) -> dict:
+    """FIX #7 — Returns rolling win rate and adaptive composite score threshold.
+
+    Queries the last `lookback_days` of resolved recommendations.
+    Adjusts minimum composite_score threshold to self-calibrate signal quality:
+      - win_rate < 40%  → raise bar to 72 (tighter filter)
+      - win_rate > 65%  → lower bar to 60 (more signals OK)
+      - otherwise       → standard 65
+
+    Returns: {"win_rate": float|None, "sample_size": int, "adjusted_threshold": float}
+    """
+    if supabase_client is None:
+        return {"win_rate": None, "sample_size": 0, "adjusted_threshold": 65}
+
+    cutoff = (datetime.now() - timedelta(days=lookback_days)).date().isoformat()
+
+    try:
+        result = (
+            supabase_client.table("recommendations")
+            .select("performance_status, composite_score")
+            .eq("trade_mode", trade_mode)
+            .neq("performance_status", "pending")
+            .gte("signal_date", cutoff)
+            .execute()
+        )
+        records = result.data or []
+    except Exception:
+        return {"win_rate": None, "sample_size": 0, "adjusted_threshold": 65}
+
+    if len(records) < 5:
+        # Not enough data to adjust — use safe default
+        return {"win_rate": None, "sample_size": len(records), "adjusted_threshold": 65}
+
+    wins = sum(1 for r in records if r.get("performance_status") == "target_hit")
+    win_rate = wins / len(records)
+
+    if win_rate < 0.40:
+        adjusted_threshold = 72   # Tighten: system is underperforming
+    elif win_rate > 0.65:
+        adjusted_threshold = 60   # Loosen: system is performing well
+    else:
+        adjusted_threshold = 65   # Standard
+
+    return {
+        "win_rate": round(win_rate, 3),
+        "sample_size": len(records),
+        "adjusted_threshold": adjusted_threshold,
+    }

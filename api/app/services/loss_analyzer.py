@@ -1,0 +1,170 @@
+"""Loss Pattern Analyzer — Fix #4 (Prompt 3) — Self-Learning Brain.
+
+Analyzes 30-day rolling stop-loss hits to detect systematic weaknesses:
+  - Sectors with win rate < 35% → suppressed_sectors
+  - Trade modes underperforming → suppressed_trade_modes
+  - Systemic signal quality failure → raises min composite override to 85
+
+Writes findings to learned_adjustments.json (read at every scan start).
+Runs weekly via /api/cron/weekly-learning endpoint.
+"""
+
+import json
+import os
+from collections import defaultdict
+from datetime import datetime, timedelta
+from typing import Any
+
+# Path is relative to the api/ working directory (where uvicorn runs from)
+_CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "config")
+LEARNING_CONFIG_PATH = os.path.join(_CONFIG_DIR, "learned_adjustments.json")
+
+_DEFAULT_CONFIG: dict[str, Any] = {
+    "generated_at": "2000-01-01T00:00:00",
+    "overall_win_rate": None,
+    "sample_size": 0,
+    "suppressed_sectors": [],
+    "suppressed_trade_modes": [],
+    "min_composite_score_override": None,
+    "sector_win_rates": {},
+    "mode_win_rates": {},
+}
+
+
+def _ensure_config_dir() -> None:
+    os.makedirs(_CONFIG_DIR, exist_ok=True)
+
+
+def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
+    """Examine last 30 days of resolved recommendations for systematic failures.
+
+    Questions answered:
+      1. Which sectors have the worst win rate? → suppress those sectors
+      2. Which trade_modes are underperforming? → suppress or flag
+      3. Are even high-composite (>80) signals failing? → raise global bar to 85
+
+    Writes results to LEARNING_CONFIG_PATH for the analyzer to read at startup.
+    Safe to call repeatedly — each call overwrites the previous config.
+
+    Returns the adjustments dict (or status dict if insufficient data).
+    """
+    if supabase_client is None:
+        return {"status": "no_client"}
+
+    cutoff = (datetime.now() - timedelta(days=30)).date().isoformat()
+
+    try:
+        result = (
+            supabase_client.table("recommendations")
+            .select("performance_status, composite_score, sector, trade_mode, signal_date")
+            .neq("performance_status", "pending")
+            .gte("signal_date", cutoff)
+            .execute()
+        )
+        records = result.data or []
+    except Exception as exc:
+        return {"status": "db_error", "error": str(exc)}
+
+    if len(records) < 10:
+        return {
+            "status": "insufficient_data",
+            "min_required": 10,
+            "available": len(records),
+        }
+
+    wins = [r for r in records if r.get("performance_status") == "target_hit"]
+    losses = [r for r in records if r.get("performance_status") == "stop_loss_hit"]
+    total_win_rate = len(wins) / len(records)
+
+    adjustments: dict[str, Any] = {
+        "generated_at": datetime.now().isoformat(),
+        "overall_win_rate": round(total_win_rate, 3),
+        "sample_size": len(records),
+        "suppressed_sectors": [],
+        "suppressed_trade_modes": [],
+        "min_composite_score_override": None,
+        "sector_win_rates": {},
+        "mode_win_rates": {},
+    }
+
+    # --- Sector win rate analysis ---
+    sector_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
+    for r in wins:
+        if r.get("sector"):
+            sector_counts[r["sector"]]["wins"] += 1
+    for r in losses:
+        if r.get("sector"):
+            sector_counts[r["sector"]]["losses"] += 1
+
+    for sector, counts in sector_counts.items():
+        total = counts["wins"] + counts["losses"]
+        if total >= 3:
+            wr = counts["wins"] / total
+            adjustments["sector_win_rates"][sector] = round(wr, 3)
+            if wr < 0.35 and total >= 5:
+                adjustments["suppressed_sectors"].append(sector)
+
+    # --- Trade mode win rate analysis ---
+    mode_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"wins": 0, "losses": 0})
+    for r in wins:
+        mode_counts[r.get("trade_mode", "unknown")]["wins"] += 1
+    for r in losses:
+        mode_counts[r.get("trade_mode", "unknown")]["losses"] += 1
+
+    for mode, counts in mode_counts.items():
+        total = counts["wins"] + counts["losses"]
+        if total >= 3:
+            wr = counts["wins"] / total
+            adjustments["mode_win_rates"][mode] = round(wr, 3)
+            if wr < 0.35 and total >= 5:
+                adjustments["suppressed_trade_modes"].append(mode)
+
+    # --- Score range analysis: systemic quality check ---
+    high_score_losses = [r for r in losses if (r.get("composite_score") or 0) > 80]
+    high_score_wins = [r for r in wins if (r.get("composite_score") or 0) > 80]
+    hs_total = len(high_score_losses) + len(high_score_wins)
+
+    if hs_total >= 5:
+        hs_wr = len(high_score_wins) / hs_total
+        if hs_wr < 0.45:
+            adjustments["min_composite_score_override"] = 85
+            adjustments["systemic_warning"] = (
+                f"Even composite >80 signals have {round(hs_wr * 100)}% win rate. "
+                "Systemic issue detected — minimum threshold raised to 85."
+            )
+
+    # Write to config
+    _ensure_config_dir()
+    try:
+        with open(LEARNING_CONFIG_PATH, "w") as f:
+            json.dump(adjustments, f, indent=2)
+    except Exception as exc:
+        adjustments["write_error"] = str(exc)
+
+    return adjustments
+
+
+def load_learned_adjustments() -> dict[str, Any]:
+    """Load learned adjustments at scan start.
+
+    Returns {} if:
+      - File doesn't exist yet (first run)
+      - File is older than 7 days (stale)
+      - JSON is malformed
+
+    This means the system silently falls back to defaults rather than
+    crashing on a missing or corrupted config file.
+    """
+    try:
+        with open(LEARNING_CONFIG_PATH) as f:
+            config = json.load(f)
+
+        generated_str = config.get("generated_at", "2000-01-01T00:00:00")
+        generated = datetime.fromisoformat(generated_str)
+        if (datetime.now() - generated).days > 7:
+            return {}  # Stale — use defaults
+
+        return config
+
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return {}

@@ -138,60 +138,91 @@ def generate_recommendation_insight(
     composite: float,
     macro_sentiment: float | None = None,
     macro_headlines: str | None = None,
+    market_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """LLM reasoning via Hugging Face router + FinBERT sentiment with macro NIFTY overlay."""
+    """LLM reasoning via Hugging Face router with full market intelligence context.
+
+    Enhancement #5: Upgraded from confirmation-biased prompt to structured,
+    risk-aware institutional analyst prompt. Includes regime, smart money,
+    candlestick pattern, sector RS, and market environment in the prompt.
+    """
     display = profile.get("display_symbol") or symbol.replace(".NS", "")
     currency = profile.get("currency") or "INR"
-    
+    ctx = market_context or {}
+
+    # Structured fallback (used when HF token absent or API fails)
+    smart_money_text = ctx.get("smart_money", "N/A")
+    candle_text = ctx.get("primary_candle") or metrics.get("primary_candle_pattern") or "None detected"
+    sector_rs_text = ctx.get("sector_rs_status") or metrics.get("sector_rs_status") or "neutral"
+    mkt_env_text = ctx.get("market_environment", "risk_on")
+
     reasoning_text = (
-        f"{display} (NSE) scores {composite:.0f}/100: trend {metrics.get('trend_score', 50):.0f}, "
-        f"technicals {metrics.get('technical_score', 50):.0f}, news {news_score:.0f}."
+        f"{display} scores {composite:.0f}/100. "
+        f"Regime: {metrics.get('regime', 'unknown')} (ADX: {metrics.get('adx', '?')}). "
+        f"Smart money: {smart_money_text}. "
+        f"Sector RS: {sector_rs_text}. "
+        f"Pattern: {candle_text}. "
+        f"RSI {metrics.get('rsi')}, R:R {metrics.get('risk_reward', '?')}:1."
     )
     if macro_sentiment is not None and macro_sentiment < 40:
-        reasoning_text += " Warning: Bearish global macro sentiment, expect overnight gap-down volatility."
-    else:
-        reasoning_text += f" RSI {metrics.get('rsi')}, price vs SMA20/SMA50 supports {'bullish' if (metrics.get('trend_score') or 0) >= 55 else 'mixed'} bias."
-        
+        reasoning_text += " Warning: Bearish macro sentiment — elevated gap-down risk."
+
     fallback = {
         "reasoning": reasoning_text,
         "confidence": min(0.95, composite / 100),
         "key_factors": [
-            "Price trend vs moving averages",
-            "RSI and MACD momentum",
-            "Recent news sentiment",
-            f"Sector: {profile.get('sector') or 'N/A'}",
+            f"Regime: {metrics.get('regime', 'N/A')} | ADX: {metrics.get('adx', 'N/A')}",
+            f"Smart money: {smart_money_text}",
+            f"Candlestick: {candle_text}",
+            f"Sector RS: {sector_rs_text} | Market: {mkt_env_text}",
         ],
     }
     if macro_sentiment is not None and macro_sentiment < 40:
-        fallback["key_factors"].append("Geopolitical and global market volatility warning")
-        
+        fallback["key_factors"].append("Bearish macro environment — gap-down risk")
+
     if not settings.hf_token:
         return fallback
- 
-    prompt = f"""You are an experienced Indian equity analyst (NSE). Analyze {display} ({symbol}) for a BUY recommendation.
- 
-Company: {profile.get('name')} | Exchange: {profile.get('exchange', 'NSE')} | Sector: {profile.get('sector')} | P/E: {profile.get('pe_ratio')}
-Price: {currency} {metrics.get('price')} | Change: {metrics.get('change_pct')}% | RSI: {metrics.get('rsi')}
-Trend score: {metrics.get('trend_score')}/100 | Technical: {metrics.get('technical_score')}/100
-News sentiment score: {news_score}/100 | Composite: {composite}/100"""
+
+    # Enhancement #5 — Structured, unbiased institutional analyst prompt
+    # max_tokens=180: 1B model degrades in quality after ~200 tokens
+    prompt = f"""You are a senior NSE equity analyst at an institutional algo trading desk.
+Analyze this stock setup honestly. Be specific. Do not use generic phrases like 'the stock looks promising'.
+
+STOCK: {profile.get('name')} ({display}) | SECTOR: {profile.get('sector')} | P/E: {profile.get('pe_ratio')} | CAP: {profile.get('cap_segment')}
+
+TECHNICAL SETUP:
+- Price: {currency} {metrics.get('price')} | RSI: {metrics.get('rsi')} | MACD above signal: {bool(metrics.get('macd') and metrics.get('macd_signal') and metrics.get('macd') > metrics.get('macd_signal'))}
+- Regime: {metrics.get('regime', 'unknown')} (ADX: {metrics.get('adx')}) | Volume ratio: {metrics.get('volume_ratio')}x avg
+- Smart money: {smart_money_text}
+- Candlestick: {candle_text}
+- Entry: {currency}{metrics.get('price')} | Target: {currency}{metrics.get('atr_target_price') or 'TBD'} | SL: {currency}{metrics.get('atr_stop_loss') or 'TBD'}
+- R:R = {metrics.get('risk_reward', '?')}:1 | Resistance blocked: {metrics.get('target_blocked', False)}
+
+MARKET CONTEXT:
+- Sector RS: {sector_rs_text} | Market environment: {mkt_env_text}
+- Composite score: {composite:.0f}/100
+
+Provide exactly 3 sentences:
+1. WHY this setup is valid (specific technical confluence, not generic)
+2. MAIN RISK that could invalidate this trade
+3. EXIT SIGNAL — what price action before stop-loss suggests the trade is failing
+
+Reply ONLY with valid JSON:
+{{"reasoning": "3 sentences", "confidence": 0.0-1.0, "key_factors": ["factor1", "factor2", "factor3"]}}"""
 
     if macro_headlines:
-        prompt += f"""
-Macro/Market News: {macro_headlines}
-Global/Market News Sentiment: {macro_sentiment}/100
-Note: Weave in geopolitical/global events (e.g. US-Iran strikes, Nifty crashes) and warn about potential gap-down openings or risk warnings in your reasoning if the market sentiment is bearish (score < 40)."""
+        prompt = prompt.replace(
+            "Reply ONLY with valid JSON:",
+            f"Macro news: {macro_headlines[:200]}\n\nReply ONLY with valid JSON:"
+        )
 
-    prompt += f"""
- 
-Reply ONLY with valid JSON:
-{{"reasoning": "2-3 sentences", "confidence": 0.0-1.0, "key_factors": ["factor1", "factor2", "factor3"]}}"""
- 
-    content = _chat(prompt, max_tokens=400, temperature=0.3)
+    content = _chat(prompt, max_tokens=180, temperature=0.3)
     if content:
         parsed = _extract_json(content)
         if parsed:
             return parsed
     return fallback
+
 
 
 def generate_sell_rationale(symbol: str, metrics: dict[str, Any]) -> str:

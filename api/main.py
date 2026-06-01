@@ -817,6 +817,31 @@ def telegram_test_endpoint():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/cron/weekly-learning")
+def weekly_learning(
+    authorization: str | None = Header(None),
+):
+    """Runs every Sunday night. Analyzes past week's trades and updates learned config."""
+    cron_secret = os.getenv("CRON_SECRET")
+    if cron_secret:
+        expected = f"Bearer {cron_secret}"
+        if authorization != expected:
+            raise HTTPException(status_code=401, detail="Unauthorized Vercel cron trigger")
+            
+    client = get_client()
+    if not client:
+        raise HTTPException(status_code=400, detail="Supabase client not active")
+        
+    from app.services.loss_analyzer import analyze_loss_patterns
+    result = analyze_loss_patterns(client)
+    return {
+        "status": "success",
+        "win_rate": result.get("overall_win_rate"), 
+        "suppressed_sectors": result.get("suppressed_sectors"),
+        "result": result
+    }
+
+
 @app.get("/api/cron/daily")
 def vercel_cron_endpoint(
     background_tasks: BackgroundTasks,

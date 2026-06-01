@@ -18,6 +18,7 @@ import yfinance as yf
 
 from app.services import market_data, technicals
 from app.services.supabase_store import get_client
+from app.services.sector_rs import get_today_market_context, get_sector_relative_strength, _normalize_sector
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +35,53 @@ DEFAULT_THRESHOLDS = {
     "target_pct": 0.10,         # 10% profit target
     "stop_pct": 0.03,           # 3% stop loss (3.3:1 reward-to-risk)
 }
+
+
+# ---------------------------------------------------------------------------
+# Enhancement #7 — Market/Sector Gate Before Firing Any Alpha Alert
+# ---------------------------------------------------------------------------
+
+
+def should_fire_alpha_alert(
+    sector: str | None,
+    composite_score: float,
+    market_ctx: dict | None = None,
+) -> tuple[bool, str]:
+    """Final gate before firing an alpha alert.
+
+    Returns (should_fire: bool, suppression_reason: str).
+    Suppresses alerts on risk-off days and lagging sectors.
+    Raises minimum bar to 80 in caution mode.
+    """
+    ctx = market_ctx or {}
+    breadth = ctx.get("breadth", {"environment": "risk_on"})
+    env = breadth.get("environment", "risk_on")
+
+    if env == "risk_off":
+        reasons = ", ".join(breadth.get("reasons", ["risk conditions"]))
+        return False, f"Market risk-off: {reasons}"
+
+    # Sector RS gate
+    if sector:
+        normalized = _normalize_sector(sector)
+        if normalized:
+            sectors_map = ctx.get("sectors", {})
+            if normalized in sectors_map:
+                sector_rs = sectors_map[normalized]
+            else:
+                try:
+                    sector_rs = get_sector_relative_strength(normalized)
+                except Exception:
+                    sector_rs = {"status": "neutral"}
+            if sector_rs.get("status") == "lagging" and composite_score < 80:
+                return False, f"Sector {sector} lagging — alert suppressed unless score ≥ 80"
+
+    # Caution mode raises bar
+    min_score = 80.0 if env == "caution" else 70.0
+    if composite_score < min_score:
+        return False, f"Score {composite_score:.0f} below {min_score:.0f} threshold for {env} market"
+
+    return True, ""
 
 
 def scan_alpha_alerts(
@@ -90,6 +138,26 @@ def scan_alpha_alerts(
         except Exception:
             pass
 
+    # ENHANCEMENT #7 — Fetch market context once (cached) for gate checks
+    try:
+        market_ctx = get_today_market_context()
+    except Exception:
+        market_ctx = {"breadth": {"environment": "risk_on"}, "sectors": {}}
+
+    # Hard abort on risk-off
+    if market_ctx["breadth"].get("environment") == "risk_off":
+        reasons = ", ".join(market_ctx["breadth"].get("reasons", []))
+        return {
+            "alerts": [],
+            "raw_features": [],
+            "scanned": 0,
+            "passed": 0,
+            "generated_at": datetime.now().isoformat(),
+            "thresholds": cfg,
+            "suppressed": True,
+            "suppression_reason": f"Market risk-off: {reasons}",
+        }
+
     # Parallel analysis
     alerts: list[dict[str, Any]] = []
     scanned = 0
@@ -143,6 +211,15 @@ def scan_alpha_alerts(
         elif cfg["require_macd_cross"] and not bullish_cross:
             passed_filter = False
 
+        # ENHANCEMENT #7 — Market/sector gate
+        if passed_filter:
+            should_fire, suppression = should_fire_alpha_alert(
+                profile.get("sector"), composite, market_ctx
+            )
+            if not should_fire:
+                passed_filter = False
+                raw_feat["suppression_reason"] = suppression
+
         if not passed_filter:
             return {"alert": None, "raw_features": raw_feat}
 
@@ -170,7 +247,7 @@ def scan_alpha_alerts(
         name = profile.get("name", display)
         sector = profile.get("sector", "N/A")
 
-        # Build reasoning
+        # Build reasoning — include sector RS context if available
         signals = []
         if bullish_cross:
             signals.append("MACD bullish crossover on 60m")
@@ -181,6 +258,13 @@ def scan_alpha_alerts(
         if rsi:
             signals.append(f"RSI {rsi:.1f} in momentum zone")
         signals.append(f"Composite score {composite:.0f}/100")
+        # Append sector RS context
+        normalized_sector = _normalize_sector(profile.get("sector"))
+        if normalized_sector:
+            sector_map = market_ctx.get("sectors", {})
+            if normalized_sector in sector_map:
+                sr = sector_map[normalized_sector]
+                signals.append(f"Sector {normalized_sector} RS: {sr.get('status', 'neutral')} ({sr.get('rs_score', 1.0):.3f})")
 
         reasoning = f"{display} ({cap_segment.upper()} cap) showing strong intraday setup. " + ". ".join(signals) + "."
 

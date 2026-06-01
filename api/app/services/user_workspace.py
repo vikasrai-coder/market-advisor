@@ -258,7 +258,7 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
         try:
             norm_sym = normalize_symbol(sym)
             ticker = yf.Ticker(norm_sym)
-            history = ticker.history(period="1d")
+            history = ticker.history(period="60d")
             current_price = float(history["Close"].iloc[-1]) if not history.empty else buy_price
 
             investment = round(qty * buy_price, 2)
@@ -268,6 +268,21 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
 
             total_investment += investment
             total_current_value += current_value
+
+            # Position health monitoring
+            health_analysis = None
+            try:
+                from app.services.position_monitor import check_position_health
+                health_analysis = check_position_health(
+                    symbol=norm_sym,
+                    entry_price=buy_price,
+                    stop_loss=stop_loss if stop_loss else (buy_price * 0.95),
+                    target_price=target_price if target_price else (buy_price * 1.15),
+                    trade_mode=item.get("trade_mode", "swing"),
+                    df=history
+                )
+            except Exception as health_exc:
+                logger.error(f"Failed to check health for {norm_sym}: {health_exc}")
 
             holdings_items.append({
                 "symbol": norm_sym,
@@ -282,6 +297,7 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
                 "current_value": current_value,
                 "profit_loss": profit_loss,
                 "profit_loss_pct": profit_loss_pct,
+                "health_analysis": health_analysis,
             })
         except Exception:
             investment = round(qty * buy_price, 2)
