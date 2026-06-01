@@ -230,6 +230,50 @@ def run_full_analysis(
     # 4. Fetch news only for top 15 candidate stocks in parallel to speed up news checks
     top_candidates = scored[:15]
     
+    # 4.1. Fetch event risks in parallel for top 15 candidates to prevent Vercel serverless timeouts (saves 150+ yfinance HTTP calls!)
+    from app.services.event_risk import get_event_risk
+    event_risks = {}
+    with ThreadPoolExecutor(max_workers=5) as event_pool:
+        event_futures = {
+            event_pool.submit(get_event_risk, item["symbol"]): item["symbol"]
+            for item in top_candidates
+        }
+        for future in as_completed(event_futures):
+            sym = event_futures[future]
+            try:
+                event_risks[sym] = future.result()
+            except Exception:
+                event_risks[sym] = {"risk_level": "clear", "events": [], "safe_to_trade": True}
+
+    # Apply event risks and penalties/blocks to the top candidates
+    for item in top_candidates:
+        sym = item["symbol"]
+        evt_risk = event_risks.get(sym, {"risk_level": "clear"})
+        
+        event_risk_penalty = 0
+        event_risk_warning = ""
+        
+        if evt_risk["risk_level"] == "high_risk":
+            item["composite_score"] = 0.0
+            item["event_blocked"] = True
+            item["reasoning"] = "Avoid: high upcoming event risk"
+        elif evt_risk["risk_level"] == "earnings_near":
+            if cfg.mode in ("swing", "longterm"):
+                item["composite_score"] = 0.0
+                item["event_blocked"] = True
+                item["reasoning"] = "Avoid: earnings approaching in next 7 days"
+            else:
+                event_risk_penalty = 20
+                event_risk_warning = " ⚠️ EARNINGS APPROACHING — intraday only, no overnight holding."
+        elif evt_risk["risk_level"] == "exdiv_near":
+            event_risk_penalty = 15
+            event_risk_warning = " ⚠️ Ex-dividend date approaching — price may drop."
+            
+        if event_risk_penalty > 0:
+            item["composite_score"] = max(0.0, item["composite_score"] - event_risk_penalty)
+        if event_risk_warning:
+            item["entry_note"] = (item.get("entry_note") or "") + event_risk_warning
+
     from app.services.system_settings import get_settings
     settings_data = get_settings()
     usage_mode = settings_data.get("usage_mode", "low")
@@ -242,24 +286,7 @@ def run_full_analysis(
         # Skip heavy news fetching & classification in intraday or Vercel serverless functions
         # to save Vercel Fluid Active CPU time and ensure quick execution.
         for item in top_candidates:
-            trend = item["metrics"].get("trend_score") or 50.0
-            technical = item["metrics"].get("technical_score") or 50.0
-            fundamental = item["metrics"].get("fundamental_score") or 0.0
-            news_score = 50.0
-            
-            composite = round(
-                trend * cfg.weight_trend 
-                + technical * cfg.weight_technical 
-                + news_score * cfg.weight_news
-                + fundamental * cfg.weight_fundamental,
-                2,
-            )
-            if macro_sentiment_score < 45:
-                macro_modifier = (macro_sentiment_score - 50.0) * 0.4
-                composite = round(composite + macro_modifier, 2)
-                
             item["news_score"] = 50.0
-            item["composite_score"] = composite
             item["news_rows"] = []
     else:
         candidate_news = {}
@@ -275,29 +302,17 @@ def run_full_analysis(
                 except Exception:
                     candidate_news[sym] = []
 
-        # Update candidate stocks with real news scores and recompute final composite
+        # Update candidate stocks with real news scores and adjust the composite score by the delta
         for item in top_candidates:
             sym = item["symbol"]
             articles = candidate_news.get(sym, [])
-            news_score = _compute_news_score(articles)
+            real_news_score = _compute_news_score(articles)
             
-            trend = item["metrics"].get("trend_score") or 50.0
-            technical = item["metrics"].get("technical_score") or 50.0
-            fundamental = item["metrics"].get("fundamental_score") or 0.0
+            # Since first pass used news_score=50.0, adjust by the weighted difference
+            news_delta = (real_news_score - 50.0) * cfg.weight_news
             
-            composite = round(
-                trend * cfg.weight_trend 
-                + technical * cfg.weight_technical 
-                + news_score * cfg.weight_news
-                + fundamental * cfg.weight_fundamental,
-                2,
-            )
-            if macro_sentiment_score < 45:
-                macro_modifier = (macro_sentiment_score - 50.0) * 0.4
-                composite = round(composite + macro_modifier, 2)
-            
-            item["news_score"] = round(news_score, 2)
-            item["composite_score"] = composite
+            item["news_score"] = round(real_news_score, 2)
+            item["composite_score"] = round(max(0.0, min(100.0, item["composite_score"] + news_delta)), 2)
             item["news_rows"] = [
                 {**article, "sentiment_label": "neutral", "sentiment_score": 0.5}
                 for article in articles
@@ -707,25 +722,8 @@ def _analyze_symbol_swing(
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
     # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar
+    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
     # -------------------------------------------------------------------------
-    from app.services.event_risk import get_event_risk
-    event_risk = get_event_risk(symbol)
-    if event_risk["risk_level"] == "high_risk":
-        return {**_zero, "event_blocked": True, "reasoning": "Avoid: high upcoming event risk"}
-
-    event_risk_penalty = 0
-    event_risk_warning = ""
-    if event_risk["risk_level"] == "earnings_near":
-        # Skip swing and longterm trades near earnings
-        if cfg.mode in ("swing", "longterm"):
-            return {**_zero, "event_blocked": True, "reasoning": "Avoid: earnings approaching in next 7 days"}
-        # For intraday only — allow but warn and penalise
-        event_risk_penalty = 20
-        event_risk_warning = " ⚠️ EARNINGS APPROACHING — intraday only, no overnight holding."
-    elif event_risk["risk_level"] == "exdiv_near":
-        event_risk_penalty = 15
-        event_risk_warning = " ⚠️ Ex-dividend date approaching — price may drop."
 
     # -------------------------------------------------------------------------
     # Fix #4 — Self-Learning Suppressions
@@ -860,7 +858,7 @@ def _analyze_symbol_swing(
         composite = round(max(0.0, composite + macro_modifier), 2)
 
     # Apply Prompt 3 new penalties
-    composite = max(0.0, composite - event_risk_penalty - sector_learning_penalty - entry_timing_penalty)
+    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
     composite = round(composite, 2)
 
     news_rows = [
@@ -905,7 +903,7 @@ def _analyze_symbol_swing(
         # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
-        "entry_note": entry_zone["entry_note"] + event_risk_warning,
+        "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
         # Prepopulate confirming signals list
         "confirming_signals_list": [
@@ -1008,22 +1006,8 @@ def _analyze_symbol_intraday(
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
     # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar
+    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
     # -------------------------------------------------------------------------
-    from app.services.event_risk import get_event_risk
-    event_risk = get_event_risk(symbol)
-    if event_risk["risk_level"] == "high_risk":
-        return {**_blocked, "event_blocked": True, "reasoning": "Avoid: high upcoming event risk"}
-
-    event_risk_penalty = 0
-    event_risk_warning = ""
-    if event_risk["risk_level"] == "earnings_near":
-        # For intraday only — allow but warn and penalise
-        event_risk_penalty = 20
-        event_risk_warning = " ⚠️ EARNINGS APPROACHING — intraday only, no overnight holding."
-    elif event_risk["risk_level"] == "exdiv_near":
-        event_risk_penalty = 15
-        event_risk_warning = " ⚠️ Ex-dividend date approaching — price may drop."
 
     # -------------------------------------------------------------------------
     # Fix #4 — Self-Learning Suppressions
@@ -1174,7 +1158,7 @@ def _analyze_symbol_intraday(
         # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
-        "entry_note": entry_zone["entry_note"] + event_risk_warning,
+        "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
         # Prepopulate confirming signals list
         "confirming_signals_list": [
@@ -1252,21 +1236,8 @@ def _analyze_symbol_longterm(
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
     # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar
+    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
     # -------------------------------------------------------------------------
-    from app.services.event_risk import get_event_risk
-    event_risk = get_event_risk(symbol)
-    if event_risk["risk_level"] == "high_risk":
-        return {**_zero, "event_blocked": True, "reasoning": "Avoid: high upcoming event risk"}
-
-    event_risk_penalty = 0
-    event_risk_warning = ""
-    if event_risk["risk_level"] == "earnings_near":
-        # Skip swing and longterm trades near earnings
-        return {**_zero, "event_blocked": True, "reasoning": "Avoid: earnings approaching in next 7 days"}
-    elif event_risk["risk_level"] == "exdiv_near":
-        event_risk_penalty = 15
-        event_risk_warning = " ⚠️ Ex-dividend date approaching — price may drop."
 
     # -------------------------------------------------------------------------
     # Fix #4 — Self-Learning Suppressions
@@ -1397,7 +1368,7 @@ def _analyze_symbol_longterm(
         composite = round(max(0.0, composite + macro_modifier), 2)
 
     # Apply Prompt 3 new penalties
-    composite = max(0.0, composite - event_risk_penalty - sector_learning_penalty - entry_timing_penalty)
+    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
 
     # -------------------------------------------------------------------------
     # NEW — Fundamental blend criteria (+15/-15)
@@ -1454,7 +1425,7 @@ def _analyze_symbol_longterm(
         # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
-        "entry_note": entry_zone["entry_note"] + event_risk_warning,
+        "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
         # Prepopulate confirming signals list
         "confirming_signals_list": [
