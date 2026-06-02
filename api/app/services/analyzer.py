@@ -1118,7 +1118,7 @@ def _analyze_symbol_intraday(
         composite = round(max(0.0, composite + macro_modifier), 2)
 
     # Apply Prompt 3 penalties
-    composite = max(0.0, composite - event_risk_penalty - sector_learning_penalty - entry_timing_penalty)
+    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
     composite = round(composite, 2)
 
     return {
