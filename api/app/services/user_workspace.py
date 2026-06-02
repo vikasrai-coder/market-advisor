@@ -110,6 +110,7 @@ def _fetch_stock_profile(norm_sym: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
+    import pandas as pd
     client = get_client()
     raw_symbols: List[str] = []
 
@@ -128,36 +129,72 @@ def get_user_watchlist(user_id: str) -> List[Dict[str, Any]]:
         cache = _read_local_cache()
         raw_symbols = cache.get("user_watchlists", {}).get(user_id, [])
 
-    # Fetch live price metrics for watchlisted symbols
-    watchlist_items = []
-    for sym in raw_symbols:
+    if not raw_symbols:
+        return []
+
+    symbols_list = [normalize_symbol(sym) for sym in raw_symbols]
+
+    # 1. Bulk fetch stock profiles from DB to avoid slow sequential ticker.info calls
+    db_profiles = {}
+    if client:
         try:
-            norm_sym = normalize_symbol(sym)
-            ticker = yf.Ticker(norm_sym)
-            info = ticker.info or {}
+            res = client.table("stocks").select("*").in_("symbol", symbols_list).execute()
+            for row in res.data:
+                db_profiles[row["symbol"]] = row
+        except Exception as exc:
+            logger.error(f"Error bulk fetching stock profiles: {exc}")
 
-            history = ticker.history(period="1d")
-            price = float(history["Close"].iloc[-1]) if not history.empty else 0.0
-            prev_close = float(info.get("previousClose") or price)
-            change_pct = round(((price - prev_close) / prev_close * 100), 2) if prev_close else 0.0
+    # 2. Bulk download price history (5d period is enough to get last close and previous close)
+    bulk_history = {}
+    try:
+        tickers_str = " ".join(symbols_list)
+        df = yf.download(tickers_str, period="5d", group_by="ticker", progress=False, threads=True)
+        for sym in symbols_list:
+            try:
+                if isinstance(df.columns, pd.MultiIndex):
+                    if sym in df.columns.get_level_values(0):
+                        sym_df = df[sym].copy().dropna(how="all")
+                        if not sym_df.empty:
+                            bulk_history[sym] = sym_df
+                else:
+                    sym_df = df.copy().dropna(how="all")
+                    if not sym_df.empty:
+                        bulk_history[sym] = sym_df
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.error(f"Failed to bulk download history for watchlist: {exc}")
 
-            watchlist_items.append({
-                "symbol": norm_sym,
-                "display_symbol": display_symbol(norm_sym),
-                "name": info.get("longName") or info.get("shortName") or display_symbol(norm_sym),
-                "sector": info.get("sector") or "Unclassified",
-                "price": price,
-                "change_pct": change_pct,
-            })
-        except Exception:
-            watchlist_items.append({
-                "symbol": sym,
-                "display_symbol": display_symbol(sym),
-                "name": display_symbol(sym),
-                "sector": "Unclassified",
-                "price": 0.0,
-                "change_pct": 0.0,
-            })
+    # Assemble items
+    watchlist_items = []
+    for sym in symbols_list:
+        profile = db_profiles.get(sym) or {}
+        name = profile.get("name") or display_symbol(sym)
+        sector = profile.get("sector") or "Unclassified"
+
+        history = bulk_history.get(sym)
+        price = 0.0
+        change_pct = 0.0
+
+        if history is not None and not history.empty:
+            try:
+                if len(history) >= 2:
+                    price = float(history["Close"].iloc[-1])
+                    prev_close = float(history["Close"].iloc[-2])
+                    change_pct = round(((price - prev_close) / prev_close * 100), 2) if prev_close else 0.0
+                else:
+                    price = float(history["Close"].iloc[-1])
+            except Exception:
+                pass
+
+        watchlist_items.append({
+            "symbol": sym,
+            "display_symbol": display_symbol(sym),
+            "name": name,
+            "sector": sector,
+            "price": price,
+            "change_pct": change_pct,
+        })
     return watchlist_items
 
 
@@ -224,6 +261,7 @@ def remove_from_watchlist(user_id: str, symbol: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_user_portfolio(user_id: str) -> Dict[str, Any]:
+    import pandas as pd
     client = get_client()
     holdings = []
 
@@ -241,6 +279,51 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
         cache = _read_local_cache()
         holdings = cache.get("user_portfolios", {}).get(user_id, [])
 
+    if not holdings:
+        return {
+            "summary": {
+                "total_investment": 0.0,
+                "total_current_value": 0.0,
+                "total_profit_loss": 0.0,
+                "total_profit_loss_pct": 0.0,
+            },
+            "holdings": [],
+        }
+
+    symbols_list = [normalize_symbol(item["symbol"]) for item in holdings if item.get("symbol")]
+
+    # 1. Bulk fetch stock profiles from DB to avoid slow sequential ticker.info calls
+    db_profiles = {}
+    if client and symbols_list:
+        try:
+            res = client.table("stocks").select("*").in_("symbol", symbols_list).execute()
+            for row in res.data:
+                db_profiles[row["symbol"]] = row
+        except Exception as exc:
+            logger.error(f"Error bulk fetching stock profiles: {exc}")
+
+    # 2. Bulk download price histories (60d) in a single request
+    bulk_history = {}
+    if symbols_list:
+        try:
+            tickers_str = " ".join(symbols_list)
+            df = yf.download(tickers_str, period="60d", group_by="ticker", progress=False, threads=True)
+            for sym in symbols_list:
+                try:
+                    if isinstance(df.columns, pd.MultiIndex):
+                        if sym in df.columns.get_level_values(0):
+                            sym_df = df[sym].copy().dropna(how="all")
+                            if not sym_df.empty:
+                                bulk_history[sym] = sym_df
+                    else:
+                        sym_df = df.copy().dropna(how="all")
+                        if not sym_df.empty:
+                            bulk_history[sym] = sym_df
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.error(f"Failed to bulk download history for portfolio: {exc}")
+
     total_investment = 0.0
     total_current_value = 0.0
     holdings_items = []
@@ -255,12 +338,19 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
         if not sym or qty <= 0:
             continue
 
-        try:
-            norm_sym = normalize_symbol(sym)
-            ticker = yf.Ticker(norm_sym)
-            history = ticker.history(period="60d")
-            current_price = float(history["Close"].iloc[-1]) if not history.empty else buy_price
+        norm_sym = normalize_symbol(sym)
+        profile = db_profiles.get(norm_sym) or {}
+        name = profile.get("name") or display_symbol(norm_sym)
 
+        history = bulk_history.get(norm_sym)
+        current_price = buy_price
+        if history is not None and not history.empty:
+            try:
+                current_price = float(history["Close"].iloc[-1])
+            except Exception:
+                pass
+
+        try:
             investment = round(qty * buy_price, 2)
             current_value = round(qty * current_price, 2)
             profit_loss = round(current_value - investment, 2)
@@ -271,23 +361,24 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
 
             # Position health monitoring
             health_analysis = None
-            try:
-                from app.services.position_monitor import check_position_health
-                health_analysis = check_position_health(
-                    symbol=norm_sym,
-                    entry_price=buy_price,
-                    stop_loss=stop_loss if stop_loss else (buy_price * 0.95),
-                    target_price=target_price if target_price else (buy_price * 1.15),
-                    trade_mode=item.get("trade_mode", "swing"),
-                    df=history
-                )
-            except Exception as health_exc:
-                logger.error(f"Failed to check health for {norm_sym}: {health_exc}")
+            if history is not None and not history.empty:
+                try:
+                    from app.services.position_monitor import check_position_health
+                    health_analysis = check_position_health(
+                        symbol=norm_sym,
+                        entry_price=buy_price,
+                        stop_loss=stop_loss if stop_loss else (buy_price * 0.95),
+                        target_price=target_price if target_price else (buy_price * 1.15),
+                        trade_mode=item.get("trade_mode", "swing"),
+                        df=history
+                    )
+                except Exception as health_exc:
+                    logger.error(f"Failed to check health for {norm_sym}: {health_exc}")
 
             holdings_items.append({
                 "symbol": norm_sym,
                 "display_symbol": display_symbol(norm_sym),
-                "name": ticker.info.get("longName") or ticker.info.get("shortName") or display_symbol(norm_sym),
+                "name": name,
                 "shares_quantity": qty,
                 "buy_price": buy_price,
                 "current_price": current_price,
@@ -302,9 +393,9 @@ def get_user_portfolio(user_id: str) -> Dict[str, Any]:
         except Exception:
             investment = round(qty * buy_price, 2)
             holdings_items.append({
-                "symbol": sym,
-                "display_symbol": display_symbol(sym),
-                "name": display_symbol(sym),
+                "symbol": norm_sym,
+                "display_symbol": display_symbol(norm_sym),
+                "name": name,
                 "shares_quantity": qty,
                 "buy_price": buy_price,
                 "current_price": buy_price,
