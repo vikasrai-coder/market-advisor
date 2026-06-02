@@ -292,25 +292,46 @@ def chatbot_ask_endpoint(req: ChatbotRequest):
 
         if client:
             try:
-                recs_res = client.table("recommendations").select("*, stocks(name)").eq("trade_mode", "swing").order("rank").limit(3).execute()
+                # Query the latest active trade date for swing recommendations
+                latest_swing = client.table("recommendations").select("trade_date").eq("trade_mode", "swing").order("trade_date", desc=True).limit(1).execute()
+                latest_swing_date = latest_swing.data[0]["trade_date"] if latest_swing and latest_swing.data else None
+
+                query_swing = client.table("recommendations").select("*, stocks(name)").eq("trade_mode", "swing")
+                if latest_swing_date:
+                    query_swing = query_swing.eq("trade_date", latest_swing_date)
+                recs_res = query_swing.order("rank").limit(10).execute() # Fetch more to allow filtering corrupt rows
+                
                 if recs_res and recs_res.data:
                     for r in recs_res.data:
-                        display = r["symbol"].replace(".NS", "")
                         target = float(r.get("target_price") or 0)
                         stop = float(r.get("stop_loss") or 0)
+                        # Skip corrupt or placeholder rows
+                        if target <= 0 or stop <= 0:
+                            continue
+                        display = r["symbol"].replace(".NS", "")
                         reason = r.get("reasoning", "")
                         pick_info = f"{display} (Target: INR {target:.2f}, Stop-Loss: INR {stop:.2f}) - {reason[:120]}..."
                         if len(short_term_picks) < 2:
                             short_term_picks.append(pick_info)
-                        else:
+                        elif len(medium_term_picks) < 2:
                             medium_term_picks.append(pick_info)
                 
-                long_res = client.table("recommendations").select("*, stocks(name)").eq("trade_mode", "longterm").order("rank").limit(2).execute()
+                # Query the latest active trade date for longterm recommendations
+                latest_long = client.table("recommendations").select("trade_date").eq("trade_mode", "longterm").order("trade_date", desc=True).limit(1).execute()
+                latest_long_date = latest_long.data[0]["trade_date"] if latest_long and latest_long.data else None
+
+                query_long = client.table("recommendations").select("*, stocks(name)").eq("trade_mode", "longterm")
+                if latest_long_date:
+                    query_long = query_long.eq("trade_date", latest_long_date)
+                long_res = query_long.order("rank").limit(10).execute()
+
                 if long_res and long_res.data:
                     for r in long_res.data:
-                        display = r["symbol"].replace(".NS", "")
                         target = float(r.get("target_price") or 0)
                         stop = float(r.get("stop_loss") or 0)
+                        if target <= 0 or stop <= 0:
+                            continue
+                        display = r["symbol"].replace(".NS", "")
                         reason = r.get("reasoning", "")
                         long_term_picks.append(f"{display} (Target: INR {target:.2f}, Stop-Loss: INR {stop:.2f}) - {reason[:120]}...")
             except Exception as exc:
