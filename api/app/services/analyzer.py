@@ -671,12 +671,20 @@ def _analyze_symbol_swing(
     learned: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Daily analysis — swing + future modes with regime gate, ATR SL/TP, and intelligence layer."""
-    profile = db_profile if db_profile is not None else market_data.fetch_stock_profile(symbol)
-    history = (
-        history_df
-        if history_df is not None and not history_df.empty
-        else market_data.fetch_price_history(symbol, period=cfg.history_period, interval=cfg.history_interval)
-    )
+    profile = db_profile if db_profile is not None else {
+        "symbol": symbol,
+        "name": symbol.replace(".NS", ""),
+        "sector": "Unclassified",
+        "market_cap": 0.0,
+        "pe_ratio": 0.0,
+        "dividend_yield": 0.0,
+    }
+    history = history_df
+    if history is None or history.empty:
+        return {
+            "symbol": symbol, "profile": profile, "metrics": {},
+            "news_score": 50.0, "composite_score": 0.0, "news_rows": [],
+        }
     metrics = technicals.compute_indicators(history)
     articles = news_articles if news_articles is not None else []
     news_score = _compute_news_score(articles)
@@ -931,12 +939,21 @@ def _analyze_symbol_intraday(
     daily_history_df: Any = None,
 ) -> dict[str, Any]:
     """60-min candle analysis for intraday with daily HTF regime gate and ATR SL/TP."""
-    profile = db_profile if db_profile is not None else market_data.fetch_stock_profile(symbol)
-    history = (
-        history_df
-        if history_df is not None and not history_df.empty
-        else market_data.fetch_intraday_history(symbol, period=cfg.history_period, interval=cfg.history_interval)
-    )
+    profile = db_profile if db_profile is not None else {
+        "symbol": symbol,
+        "name": symbol.replace(".NS", ""),
+        "sector": "Unclassified",
+        "market_cap": 0.0,
+        "pe_ratio": 0.0,
+        "dividend_yield": 0.0,
+    }
+    history = history_df
+    if history is None or history.empty:
+        return {
+            "symbol": symbol, "profile": profile, "metrics": {},
+            "news_score": 50.0, "composite_score": 0.0, "news_rows": [],
+        }
+
     metrics = technicals.compute_intraday_indicators(history)
     articles = news_articles if news_articles is not None else []
     news_score = _compute_news_score(articles)
@@ -948,12 +965,10 @@ def _analyze_symbol_intraday(
 
     # FIX #4 — Higher timeframe (daily) regime gate for intraday
     try:
-        daily_df = (
-            daily_history_df
-            if daily_history_df is not None and not daily_history_df.empty
-            else yf.download(symbol, period="3mo", interval="1d", progress=False)
-        )
-        daily_regime = technicals.get_market_regime(daily_df)
+        if daily_history_df is not None and not daily_history_df.empty:
+            daily_regime = technicals.get_market_regime(daily_history_df)
+        else:
+            daily_regime = {"regime": "sideways", "adx": 0.0, "tradeable": True}
         if daily_regime["regime"] == "downtrend":
             return {**_blocked, "regime_blocked": True}
     except Exception:
