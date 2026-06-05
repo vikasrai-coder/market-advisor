@@ -37,7 +37,7 @@ type PermissionSet = {
 };
 
 type SessionUser = { id: string; email: string; role: string };
-type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha";
+type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha" | "mindmap";
 
 const DEFAULT_PERMISSIONS: PermissionSet = {
   can_view_charts: false,
@@ -99,7 +99,7 @@ export function Dashboard() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as DashboardTab;
-      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "admin"].includes(tab)) {
+      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "admin", "mindmap"].includes(tab)) {
         setActiveTab(tab);
       }
 
@@ -317,6 +317,14 @@ export function Dashboard() {
         <AlphaAlerts userId={impersonatedId || sessionUser?.id || "default-trader-admin"} />
       ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <PennyScans />
+      ) : activeTab === "mindmap" && sessionUser?.role === "admin" && !impersonatedEmail ? (
+        <div className="w-full rounded-xl border border-slate-800 bg-slate-900/35 overflow-hidden shadow-2xl" style={{ height: "calc(100vh - 240px)", minHeight: "650px" }}>
+          <iframe 
+            src="/market_advisor_mindmap.html" 
+            className="w-full h-full border-none"
+            title="System Architecture Mind Map"
+          />
+        </div>
       ) : activeTab === "scans" ? (
         permissions.can_view_recommendations === false ? (
           <LockedPanel title="Scanner Recommendations Locked" detail="Admin access rules hide recommendations for this profile." />
@@ -548,6 +556,12 @@ function buildTabs({
         id: "pennyscans",
         label: "Penny Scans",
         activeClass: "border-amber-400/70 bg-amber-500 text-slate-950",
+        onSelect,
+      },
+      {
+        id: "mindmap",
+        label: "Mind Map",
+        activeClass: "border-violet-400/60 bg-violet-950/70 text-violet-100",
         onSelect,
       },
       {

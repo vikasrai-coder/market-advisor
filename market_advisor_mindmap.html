@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market Advisor - System Architecture Mind Map</title>
+  
+  <!-- Typography & Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- D3.js and Anime.js CDN Libraries -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+  
+  <style>
+    :root {
+      --bg-dark: #070814;
+      --bg-card: rgba(13, 14, 33, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --font-main: 'Plus Jakarta Sans', sans-serif;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      
+      /* Glowing colors for categories */
+      --color-root: #8b5cf6;
+      --color-frontend: #00f0ff;
+      --color-backend: #10b981;
+      --color-external: #f59e0b;
+      --color-logic: #d946ef;
+      
+      --glow-root: rgba(139, 92, 246, 0.4);
+      --glow-frontend: rgba(0, 240, 255, 0.4);
+      --glow-backend: rgba(16, 185, 129, 0.4);
+      --glow-external: rgba(245, 158, 11, 0.4);
+      --glow-logic: rgba(217, 70, 239, 0.4);
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: var(--font-main);
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 20% 30%, rgba(139, 92, 246, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(0, 240, 255, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, #0c0d21 0%, #04040a 100%);
+      color: #e2e8f0;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+    
+    /* Layout */
+    .app-container {
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      height: 100vh;
+      width: 100vw;
+    }
+    
+    .visualization-pane {
+      position: relative;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+    
+    /* Sidebar Details Glassmorphism */
+    .details-sidebar {
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      z-index: 10;
+      box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+      position: relative;
+      overflow-y: auto;
+      transform: translateX(0);
+    }
+    
+    /* Header / Floating Controls */
+    .header-panel {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      right: 424px;
+      z-index: 5;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+    }
+    
+    .brand {
+      background: rgba(13, 14, 33, 0.8);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      padding: 16px 24px;
+      border-radius: 16px;
+      pointer-events: auto;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    }
+    
+    .brand h1 {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .brand p {
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    
+    .controls-row {
+      display: flex;
+      gap: 12px;
+      pointer-events: auto;
+    }
+    
+    .control-btn, .search-container input {
+      background: rgba(13, 14, 33, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      color: #e2e8f0;
+      padding: 10px 16px;
+      border-radius: 12px;
+      font-family: var(--font-main);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .control-btn:hover {
+      background: rgba(30, 32, 69, 0.9);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+      box-shadow: 0 5px 15px rgba(139, 92, 246, 0.15);
+    }
+    
+    .search-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    
+    .search-container input {
+      width: 240px;
+      padding-right: 36px;
+      cursor: text;
+    }
+    
+    .search-container input:focus {
+      outline: none;
+      border-color: var(--color-root);
+      box-shadow: 0 0 10px var(--glow-root);
+      width: 300px;
+    }
+    
+    /* Map Legend Overlay */
+    .legend-panel {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      z-index: 5;
+      background: rgba(13, 14, 33, 0.8);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      padding: 16px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    }
+    
+    .legend-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+    
+    .legend-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 4px;
+    }
+    
+    /* Tour Control Dashboard Overlay */
+    .tour-panel {
+      position: absolute;
+      bottom: 24px;
+      left: 320px;
+      z-index: 5;
+      background: rgba(13, 14, 33, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      padding: 16px 20px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      transition: all 0.3s ease;
+    }
+    
+    .tour-panel.active {
+      border-color: var(--color-root);
+      box-shadow: 0 0 15px var(--glow-root);
+    }
+    
+    .tour-btn {
+      background: var(--color-root);
+      border: none;
+      color: white;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s, background 0.2s;
+    }
+    
+    .tour-btn:hover {
+      transform: scale(1.1);
+      background: #7c3aed;
+    }
+    
+    .tour-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .tour-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    
+    .tour-progress-container {
+      width: 120px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      margin-top: 4px;
+      overflow: hidden;
+    }
+    
+    .tour-progress-bar {
+      width: 0%;
+      height: 100%;
+      background: var(--color-root);
+      transition: width 0.3s ease;
+    }
+    
+    /* Interactive SVG Elements */
+    svg {
+      user-select: none;
+    }
+    
+    .node-group {
+      cursor: pointer;
+    }
+    
+    .node-bg {
+      fill: #0c0e25;
+      stroke-width: 1.5px;
+      transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
+    }
+    
+    .node-group:hover .node-bg {
+      fill: #141738;
+      stroke-width: 2.5px;
+      filter: drop-shadow(0 0 12px var(--glow));
+    }
+    
+    .node-text {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 13px;
+      fill: #ffffff;
+      pointer-events: none;
+    }
+    
+    .node-subtext {
+      font-family: var(--font-main);
+      font-size: 9px;
+      fill: #94a3b8;
+      pointer-events: none;
+    }
+    
+    /* Glowing Links/Paths */
+    .link-path {
+      fill: none;
+      stroke-width: 1.5px;
+      stroke-linecap: round;
+      opacity: 0.35;
+      transition: opacity 0.3s, stroke-width 0.3s;
+    }
+    
+    .link-path.active {
+      opacity: 0.85;
+      stroke-width: 2.5px;
+    }
+    
+    .link-pulse {
+      fill: none;
+      stroke-width: 2.5px;
+      stroke-dasharray: 6 30;
+      stroke-linecap: round;
+      opacity: 0.8;
+    }
+    
+    /* Sidebar styling */
+    .sidebar-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-color);
+      background: rgba(19, 21, 51, 0.4);
+    }
+    
+    .sidebar-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+    
+    .sidebar-title {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    
+    .sidebar-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #64748b;
+      word-break: break-all;
+    }
+    
+    .sidebar-content {
+      padding: 24px;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    
+    .sidebar-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .description-box {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+    
+    .tech-pill {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 4px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #e2e8f0;
+    }
+    
+    .tech-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    
+    .key-points-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      list-style-type: none;
+    }
+    
+    .key-point-item {
+      display: flex;
+      gap: 10px;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+    
+    .key-point-bullet {
+      color: var(--color-root);
+      margin-top: 2px;
+    }
+    
+    .file-action-btn {
+      margin-top: auto;
+      width: 100%;
+      background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: white;
+      padding: 14px;
+      border-radius: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      text-align: center;
+      display: block;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(109, 40, 217, 0.3);
+      transition: all 0.2s;
+    }
+    
+    .file-action-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(109, 40, 217, 0.5);
+    }
+    
+    /* Overlay Grid/Decorations */
+    .grid-lines {
+      pointer-events: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: 40px 40px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+    }
+    
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Left Workspace (Mind Map Visualizer) -->
+    <div class="visualization-pane">
+      <div class="grid-lines"></div>
+      
+      <!-- Header Overlay Panel -->
+      <div class="header-panel">
+        <div class="brand">
+          <h1>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: var(--color-root);">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Market Advisor
+          </h1>
+          <p>Interactive System Architecture</p>
+        </div>
+        
+        <div class="controls-row">
+          <!-- Search System -->
+          <div class="search-container">
+            <input type="text" id="search-input" placeholder="Search components, rules, files..." autocomplete="off">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="position: absolute; right: 12px; color: #64748b; pointer-events: none;">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+          
+          <button class="control-btn" onclick="zoomFit()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M8 12h8M12 8v8"></path>
+            </svg>
+            Fit View
+          </button>
+        </div>
+      </div>
+      
+      <!-- SVG Canvas -->
+      <svg id="mindmap-canvas" width="100%" height="100%">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#d946ef" />
+          </marker>
+        </defs>
+      </svg>
+      
+      <!-- Legend Overlay -->
+      <div class="legend-panel">
+        <div class="legend-title">System Layers</div>
+        <div class="legend-item" onclick="filterLayer('root')">
+          <div class="legend-color" style="background: var(--color-root);"></div>
+          <span>Core Advisor</span>
+        </div>
+        <div class="legend-item" onclick="filterLayer('frontend')">
+          <div class="legend-color" style="background: var(--color-frontend);"></div>
+          <span>Frontend UI</span>
+        </div>
+        <div class="legend-item" onclick="filterLayer('backend')">
+          <div class="legend-color" style="background: var(--color-backend);"></div>
+          <span>Backend Services</span>
+        </div>
+        <div class="legend-item" onclick="filterLayer('external')">
+          <div class="legend-color" style="background: var(--color-external);"></div>
+          <span>DB & External APIs</span>
+        </div>
+        <div class="legend-item" onclick="filterLayer('logic')">
+          <div class="legend-color" style="background: var(--color-logic);"></div>
+          <span>Quant Logic / Evolution</span>
+        </div>
+      </div>
+      
+      <!-- Auto-Tour Overlay Dashboard -->
+      <div class="tour-panel" id="tour-panel">
+        <button class="tour-btn" id="tour-play-btn" onclick="toggleTour()">
+          <svg id="play-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"></polygon>
+          </svg>
+          <svg id="pause-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+        </button>
+        <div class="tour-info">
+          <div class="tour-title" id="tour-title-text">Start System Auto-Tour</div>
+          <div class="tour-progress-container">
+            <div class="tour-progress-bar" id="tour-progress-bar"></div>
+          </div>
+        </div>
+      </div>
+      
+    </div>
+    
+    <!-- Right Sidebar Details Panel -->
+    <div class="details-sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-badge" id="details-badge" style="background: rgba(139, 92, 246, 0.2); color: var(--color-root);">System Core</div>
+        <h2 class="sidebar-title" id="details-title">Market Advisor</h2>
+        <div class="sidebar-meta" id="details-file">Select any architecture node to see details.</div>
+      </div>
+      
+      <div class="sidebar-content" id="sidebar-content">
+        <div>
+          <div class="sidebar-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7"></path>
+            </svg>
+            System Summary
+          </div>
+          <div class="description-box" id="details-desc">
+            The Market Advisor is an institutional-grade quant scanning, AI reasoning, and portfolio management platform tailored for the National Stock Exchange (NSE) of India.
+          </div>
+        </div>
+        
+        <div>
+          <div class="sidebar-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+              <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37zM17.5 6.5h.01"></path>
+            </svg>
+            Key Technologies
+          </div>
+          <div class="tech-pills" id="details-tech">
+            <span class="tech-pill">FastAPI</span>
+            <span class="tech-pill">Next.js</span>
+            <span class="tech-pill">Supabase</span>
+            <span class="tech-pill">yfinance</span>
+            <span class="tech-pill">FinBERT</span>
+          </div>
+        </div>
+        
+        <div>
+          <div class="sidebar-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+            Core Operations
+          </div>
+          <ul class="key-points-list" id="details-points">
+            <li class="key-point-item">
+              <span class="key-point-bullet">✦</span>
+              <span>Scans watches and tickers in multiple timeframe environments.</span>
+            </li>
+            <li class="key-point-item">
+              <span class="key-point-bullet">✦</span>
+              <span>Filters entry/exit structures using quantitative indicators.</span>
+            </li>
+            <li class="key-point-item">
+              <span class="key-point-bullet">✦</span>
+              <span>Reconciles historical alerts dynamically to calibrate win-rate thresholds.</span>
+            </li>
+          </ul>
+        </div>
+        
+        <a id="details-action-link" href="#" class="file-action-btn" target="_blank" style="display:none;">
+          View Source Code File
+        </a>
+      </div>
+    </div>
+    
+  </div>
+
+  <script>
+    // ----------------------------------------------------
+    // Codebase Architecture Data Model
+    // ----------------------------------------------------
+    const architectureData = {
+      name: "Market Advisor System",
+      type: "root",
+      description: "Ultimate Technical System Architecture & Quant advisory engine for NSE equities. Interconnects a Next.js frontend, FastAPI services, Supabase database, and Hugging Face serverless NLP sentiment reasoning layers to generate high-conviction trading signals (72-78% win rate).",
+      tech: ["Python", "FastAPI", "React", "Next.js", "PostgreSQL", "Hugging Face"],
+      operations: [
+        "Orchestrates multi-timeframe quantitative scans.",
+        "Generates sentiment-verified buy/sell signals.",
+        "Employs dynamic feedback loops via a self-learning brain."
+      ],
+      children: [
+        {
+          name: "Frontend (Next.js client)",
+          type: "frontend",
+          description: "TypeScript React client built with Next.js App Router. Renders a dark-theme dashboard with custom CSS glassmorphism components, interactive watchlists, and live backtesters.",
+          tech: ["Next.js 14", "TypeScript", "Tailwind CSS", "Recharts"],
+          operations: [
+            "App Shell routing and authentication.",
+            "Display of trading alerts & risk diagnostics.",
+            "Visual interface for strategy builders."
+          ],
+          children: [
+            {
+              name: "Dashboard.tsx",
+              type: "frontend",
+              file: "web/src/components/Dashboard.tsx",
+              description: "Main workspace rendering scans, watchlist charts, and live trade alert signals.",
+              tech: ["React", "TradingView", "Next.js"],
+              operations: [
+                "Coordinates widgets for active signals.",
+                "Triggers direct manual scans.",
+                "Renders high-conviction badges (S, A, B, C)."
+              ]
+            },
+            {
+              name: "UserWorkspace.tsx",
+              type: "frontend",
+              file: "web/src/components/UserWorkspace.tsx",
+              description: "Manages live positions, portfolio performance, and real-time position health diagnostics.",
+              tech: ["React", "PnL Ledgers", "Fetch APIs"],
+              operations: [
+                "Visualizes open trades and entry/exit criteria.",
+                "Integrates real-time diagnostic indicators.",
+                "Shows active trailing floor indicators."
+              ]
+            },
+            {
+              name: "BacktestSimulator.tsx",
+              type: "frontend",
+              file: "web/src/components/BacktestSimulator.tsx",
+              description: "Visual interface for configuring backtesting parameters (date range, stop-loss ratios, target thresholds) and analyzing metrics.",
+              tech: ["React", "Recharts", "DatePickers"],
+              operations: [
+                "Configures parameters and target thresholds.",
+                "Plots cumulative returns comparison vs Benchmark indices.",
+                "Displays detailed win rates and max drawdowns."
+              ]
+            },
+            {
+              name: "ChatbotAdvisor.tsx",
+              type: "frontend",
+              file: "web/src/components/ChatbotAdvisor.tsx",
+              description: "Conversational trading interface providing reasoning generated by the Llama-3.2 backend node.",
+              tech: ["React Markdown", "Text-to-Speech"],
+              operations: [
+                "Streams natural language stock analysis justifications.",
+                "Shows technical scores and risk tiers.",
+                "Exposes inline chart triggers."
+              ]
+            },
+            {
+              name: "AlphaAlerts.tsx",
+              type: "frontend",
+              file: "web/src/components/AlphaAlerts.tsx",
+              description: "Interactive real-time alert notifications that match specific quantitative breakouts.",
+              tech: ["Framer Motion", "Toasts"],
+              operations: [
+                "Displays high-conviction alert cards.",
+                "Classifies trade sizing recommendations.",
+                "Shows confirming signals list."
+              ]
+            },
+            {
+              name: "StrategyBuilder.tsx",
+              type: "frontend",
+              file: "web/src/components/StrategyBuilder.tsx",
+              description: "Custom indicator and screening criteria builder.",
+              tech: ["React DnD", "Formik"],
+              operations: [
+                "Configures technical thresholds (RSI limits, EMA boundaries).",
+                "Saves custom strategy schemas directly to Supabase.",
+                "Previews tickers matching builder parameters."
+              ]
+            },
+            {
+              name: "PennyScans.tsx",
+              type: "frontend",
+              file: "web/src/components/PennyScans.tsx",
+              description: "Dedicated module focusing on low-priced small-cap equities.",
+              tech: ["React Table"],
+              operations: [
+                "Filters operators risk categories.",
+                "Applies tighter 1.5x ATR stops to low liquidity setups.",
+                "Aborts assets showing operator pump indicators."
+              ]
+            }
+          ]
+        },
+        {
+          name: "Backend (FastAPI)",
+          type: "backend",
+          description: "High-performance Python FastAPI service running asynchronously. Vectorized data processing with Pandas/NumPy.",
+          tech: ["Python", "FastAPI", "Pandas", "NumPy", "Uvicorn"],
+          operations: [
+            "Handles trading alerts API routing.",
+            "Integrates external financial feeds.",
+            "Maintains low-latency caching systems."
+          ],
+          children: [
+            {
+              name: "main.py",
+              type: "backend",
+              file: "api/main.py",
+              description: "Main routing hub exposing API endpoints for scanning, backtesting, settings, news, and workspaces.",
+              tech: ["FastAPI Router", "BackgroundTasks"],
+              operations: [
+                "Hosts user portfolio and diagnostic check APIs.",
+                "Triggers weekly learning routines.",
+                "Validates API key authentications."
+              ]
+            },
+            {
+              name: "analyzer.py",
+              type: "backend",
+              file: "api/app/services/analyzer.py",
+              description: "Orchestration pipeline dispatching tickers to swing, intraday, or long-term scanning routines.",
+              tech: ["Pandas", "yfinance", "Threadpool"],
+              operations: [
+                "Pre-fetches daily context in bulk to bypass serverless timeouts.",
+                "Coordinates Technical and Sentiment data frames.",
+                "Grades overall setups into trade quality tiers (S, A, B, C)."
+              ]
+            },
+            {
+              name: "technicals.py",
+              type: "backend",
+              file: "api/app/services/technicals.py",
+              description: "Core mathematical engine executing vectorized analysis on price action.",
+              tech: ["NumPy", "Pandas", "Ta-lib"],
+              operations: [
+                "Calculates Pullback Dip Entry Zone relative to EMA8/21.",
+                "Identifies candlestick reversal patterns.",
+                "Detects Smart Money divergence (OBV/CMF)."
+              ]
+            },
+            {
+              name: "event_risk.py",
+              type: "backend",
+              file: "api/app/services/event_risk.py",
+              description: "Earnings and dividend calendar risk validation service.",
+              tech: ["yfinance Calendar"],
+              operations: [
+                "Blocks swing entries occurring within 7 days of earnings.",
+                "Applies risk penalties for ex-dividend occurrences.",
+                "Handles calendar service fallbacks."
+              ]
+            },
+            {
+              name: "loss_analyzer.py",
+              type: "backend",
+              file: "api/app/services/loss_analyzer.py",
+              description: "Weekly self-learning optimizer evaluating historical recommendations.",
+              tech: ["Supabase Queries", "JSON Parser"],
+              operations: [
+                "Computes sector win-rates over 30-day horizons.",
+                "Writes high-risk underperforming sectors to learned_adjustments.json.",
+                "Triggers composite score threshold adjustments."
+              ]
+            },
+            {
+              name: "position_monitor.py",
+              type: "backend",
+              file: "api/app/services/position_monitor.py",
+              description: "Diagnostic warning system tracking active positions.",
+              tech: ["RSI Tracker", "ATR Calculations"],
+              operations: [
+                "Fires warnings if stock falls below EMA8 on high volume.",
+                "Locks in gains via Trailing Floor Profit Protection (>60% progress).",
+                "Triggers warning notifications when trends break."
+              ]
+            },
+            {
+              name: "sector_rs.py",
+              type: "backend",
+              file: "api/app/services/sector_rs.py",
+              description: "Calculates Relative Strength vectors for sectors against Nifty 50.",
+              tech: ["Pandas MultiIndex"],
+              operations: [
+                "Compares 21-day and 63-day sector momentum indices.",
+                "Filters out stocks in lagging sectors.",
+                "Rewards leading sector setups (+10 points)."
+              ]
+            },
+            {
+              name: "supabase_store.py",
+              type: "backend",
+              file: "api/app/services/supabase_store.py",
+              description: "High-throughput database connection bridge.",
+              tech: ["Supabase PostgrestClient"],
+              operations: [
+                "Performs batch upserts for scanned metrics.",
+                "Syncs recommendations with strict constraints.",
+                "Inserts historical performance grades."
+              ]
+            }
+          ]
+        },
+        {
+          name: "External Integrations",
+          type: "external",
+          description: "Database, data providers, serverless model endpoints, and push alert notifications integrated into the platform.",
+          tech: ["yfinance", "Supabase DB", "Hugging Face Serverless", "Telegram"],
+          operations: [
+            "Fetches raw market histories.",
+            "Executes serverless AI inferences.",
+            "Stores transactional databases and alert logs."
+          ],
+          children: [
+            {
+              name: "Supabase DB",
+              type: "external",
+              description: "Postgres database executing relational schemas, passbook ledgers, and trade migrations (001-011).",
+              tech: ["Postgres 15", "Connection Pooling"],
+              operations: [
+                "Persists user watchlists and auth profiles.",
+                "Maintains audit log of past trade results.",
+                "Runs database triggers for passbook entries."
+              ]
+            },
+            {
+              name: "yfinance API",
+              type: "external",
+              description: "Low-latency market historical and calendar data fetching engine.",
+              tech: ["yfinance Library"],
+              operations: [
+                "Downloads multi-threaded bulk history.",
+                "Supplies company earnings calendars.",
+                "Sourced for dividend ex-dates."
+              ]
+            },
+            {
+              name: "Hugging Face APIs",
+              type: "external",
+              description: "Serverless machine learning inferences for sentiment scoring and text generation.",
+              tech: ["FinBERT", "Llama-3.2-1B-Instruct"],
+              operations: [
+                "Performs News micro-sentiment analysis.",
+                "Generates concise technical summaries (<180 tokens).",
+                "Triggers sentiment gate aborts."
+              ]
+            },
+            {
+              name: "Telegram Bot API",
+              type: "external",
+              description: "Automated alert webhook sending signals directly to target chat rooms.",
+              tech: ["HTTP Webhooks"],
+              operations: [
+                "Dispatches real-time S and A tier breakout alerts.",
+                "Sends daily performance summaries.",
+                "Notifies when trailing floor targets trigger."
+              ]
+            }
+          ]
+        },
+        {
+          name: "Quant Logic & Evolution",
+          type: "logic",
+          description: "Gated risk systems, calculations, and optimization algorithms that define the engine's intelligence.",
+          tech: ["Quant Formulas", "Regime Gates", "ATR Multipliers"],
+          operations: [
+            "Filters noise using ATR brackets.",
+            "Suppresses trades during risk-off regimes.",
+            "Adjusts capital sizing dynamically."
+          ],
+          children: [
+            {
+              name: "Market Regime Gate",
+              type: "logic",
+              description: "Trend confirmation module evaluating long setups.",
+              tech: ["ADX Indicator", "SMA Filter"],
+              operations: [
+                "Blocks entries if ADX < 20 (no trend).",
+                "Blocks trades below declining EMA structures.",
+                "Calculates daily Higher Timeframe regime."
+              ]
+            },
+            {
+              name: "ATR Stop-Loss/TP",
+              type: "logic",
+              description: "Volatility-adjusted exit structures.",
+              tech: ["Average True Range"],
+              operations: [
+                "Positions SL exactly at 2.0x ATR below entry.",
+                "Sets TP to target a minimum 2.5:1 Risk-to-Reward ratio.",
+                "Reduces market noise triggers."
+              ]
+            },
+            {
+              name: "Sector Relative Strength",
+              type: "logic",
+              description: "Relative Strength Index evaluating sector momentum.",
+              tech: ["Sector Indexes vs Nifty"],
+              operations: [
+                "Identifies leading sectors over 63 days.",
+                "Subtracts score points for lagging sector stocks.",
+                "Mitigates sector drag risks."
+              ]
+            },
+            {
+              name: "Pullback Dip Entry",
+              type: "logic",
+              description: "Timing engine preventing stock chasing.",
+              tech: ["EMA Extension"],
+              operations: [
+                "Blocks entry if extension > 3x ATR.",
+                "Marks wait_dip if extension 1.5x-3x ATR.",
+                "Permits immediate entry near EMAs."
+              ]
+            },
+            {
+              name: "Personality Profiling",
+              type: "logic",
+              description: "Adapts scanning rules to segment risk categories.",
+              tech: ["Liquidity Classification"],
+              operations: [
+                "Defines Institutional (>100Cr), Momentum (>20Cr), Operator Risk (>1Cr) segments.",
+                "Applies tight 1.5x ATR stops to low liquidity operator setups.",
+                "Hard blocks assets with daily turnover < 1Cr."
+              ]
+            },
+            {
+              name: "Self-Learning Adjustments",
+              type: "logic",
+              description: "Persisted feedback model suppressing failing strategies.",
+              tech: ["learned_adjustments.json"],
+              operations: [
+                "Queries 30-day win-rates.",
+                "Applies -25 penalty to sectors with < 35% win-rates.",
+                "Auto-floats threshold base score."
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    // ----------------------------------------------------
+    // SVG Settings & Setup
+    // ----------------------------------------------------
+    const svg = d3.select("#mindmap-canvas");
+    const width = window.innerWidth * 0.72; // Adjusted for sidebar width
+    const height = window.innerHeight;
+    
+    // Zoom behavior
+    const zoomGroup = svg.append("g").attr("class", "zoom-group");
+    const zoom = d3.zoom()
+      .scaleExtent([0.15, 3])
+      .on("zoom", (event) => {
+        zoomGroup.attr("transform", event.transform);
+      });
+      
+    svg.call(zoom);
+
+    // D3 Tree Layout Setup
+    const treemap = d3.tree().size([height * 0.9, width * 0.8]);
+    
+    // Build D3 Hierarchy
+    let rootNode = d3.hierarchy(architectureData, d => d.children);
+    rootNode.x0 = height / 2;
+    rootNode.y0 = 50;
+
+    // Define colors and glow mapping
+    function getLayerStyle(type) {
+      switch (type) {
+        case "root":
+          return { color: "var(--color-root)", glow: "var(--glow-root)" };
+        case "frontend":
+          return { color: "var(--color-frontend)", glow: "var(--glow-frontend)" };
+        case "backend":
+          return { color: "var(--color-backend)", glow: "var(--glow-backend)" };
+        case "external":
+          return { color: "var(--color-external)", glow: "var(--glow-external)" };
+        case "logic":
+          return { color: "var(--color-logic)", glow: "var(--glow-logic)" };
+        default:
+          return { color: "#e2e8f0", glow: "rgba(255, 255, 255, 0.2)" };
+      }
+    }
+
+    // Toggle Collapsing Nodes
+    function clickNode(event, d) {
+      if (d.children) {
+        d._children = d.children;
+        d.children = null;
+      } else {
+        d.children = d._children;
+        d._children = null;
+      }
+      updateTree(d);
+      showSidebarDetails(d.data);
+    }
+
+    // Update SVG Tree Elements
+    function updateTree(source) {
+      // Compute the tree layout
+      const treeData = treemap(rootNode);
+      const nodes = treeData.descendants();
+      const links = treeData.descendants().slice(1);
+
+      // Normalize depth
+      nodes.forEach(d => {
+        d.y = d.depth * 340; // horizontal distance
+      });
+
+      // ----------------------------------------------------
+      // Link Rendering (Beziers)
+      // ----------------------------------------------------
+      const linkSelection = zoomGroup.selectAll("path.link-path")
+        .data(links, d => d.id || (d.id = Math.random()));
+
+      const linkPulseSelection = zoomGroup.selectAll("path.link-pulse")
+        .data(links, d => d.id + "-pulse");
+
+      // Enter links
+      const linkEnter = linkSelection.enter().append("path")
+        .attr("class", "link-path")
+        .attr("d", d => {
+          const o = { x: source.x0, y: source.y0 };
+          return diagonal(o, o);
+        });
+
+      // Enter pulses (for flowing particle effect)
+      const linkPulseEnter = linkPulseSelection.enter().append("path")
+        .attr("class", "link-pulse")
+        .attr("d", d => {
+          const o = { x: source.x0, y: source.y0 };
+          return diagonal(o, o);
+        });
+
+      // Update paths
+      const linkUpdate = linkSelection.merge(linkEnter);
+      const linkPulseUpdate = linkPulseSelection.merge(linkPulseEnter);
+
+      linkUpdate.transition()
+        .duration(800)
+        .attr("d", d => diagonal(d, d.parent))
+        .attr("stroke", d => getLayerStyle(d.data.type).color);
+
+      linkPulseUpdate.transition()
+        .duration(800)
+        .attr("d", d => diagonal(d, d.parent))
+        .attr("stroke", d => getLayerStyle(d.data.type).color);
+
+      // Dasharray offset animation for pulses
+      anime({
+        targets: '.link-pulse',
+        strokeDashoffset: [200, 0],
+        duration: 4000,
+        loop: true,
+        easing: 'linear'
+      });
+
+      // Exit links
+      linkSelection.exit().transition()
+        .duration(800)
+        .attr("d", d => {
+          const o = { x: source.x, y: source.y };
+          return diagonal(o, o);
+        })
+        .remove();
+
+      linkPulseSelection.exit().transition()
+        .duration(800)
+        .attr("d", d => {
+          const o = { x: source.x, y: source.y };
+          return diagonal(o, o);
+        })
+        .remove();
+
+      // ----------------------------------------------------
+      // Node Rendering
+      // ----------------------------------------------------
+      const nodeSelection = zoomGroup.selectAll("g.node-group")
+        .data(nodes, d => d.id || (d.id = Math.random()));
+
+      // Enter nodes
+      const nodeEnter = nodeSelection.enter().append("g")
+        .attr("class", "node-group")
+        .attr("transform", d => `translate(${source.y0},${source.x0})`)
+        .on("click", clickNode);
+
+      // Node Box Card
+      nodeEnter.append("rect")
+        .attr("class", "node-bg")
+        .attr("rx", 10)
+        .attr("ry", 10)
+        .attr("width", 240)
+        .attr("height", 54)
+        .attr("x", -120)
+        .attr("y", -27);
+
+      // Category indicator circle
+      nodeEnter.append("circle")
+        .attr("cx", -102)
+        .attr("cy", 0)
+        .attr("r", 5);
+
+      // Title Text
+      nodeEnter.append("text")
+        .attr("class", "node-text")
+        .attr("x", -85)
+        .attr("y", -4)
+        .text(d => d.data.name);
+
+      // Subtext for file or category
+      nodeEnter.append("text")
+        .attr("class", "node-subtext")
+        .attr("x", -85)
+        .attr("y", 14)
+        .text(d => {
+          if (d.data.file) {
+            return d.data.file.split("/").pop();
+          }
+          return d.data.type.toUpperCase();
+        });
+
+      // Update nodes
+      const nodeUpdate = nodeSelection.merge(nodeEnter);
+
+      nodeUpdate.transition()
+        .duration(800)
+        .attr("transform", d => `translate(${d.y},${d.x})`);
+
+      // Update node styles based on data properties
+      nodeUpdate.select(".node-bg")
+        .attr("stroke", d => getLayerStyle(d.data.type).color)
+        .style("filter", d => `drop-shadow(0 4px 10px rgba(0,0,0,0.5)) drop-shadow(0 0 4px ${getLayerStyle(d.data.type).color}22)`)
+        .style("--glow", d => getLayerStyle(d.data.type).color);
+
+      nodeUpdate.select("circle")
+        .style("fill", d => getLayerStyle(d.data.type).color)
+        .style("filter", d => `drop-shadow(0 0 4px ${getLayerStyle(d.data.type).color})`);
+
+      // Exit nodes
+      nodeUpdate.exit().transition()
+        .duration(800)
+        .attr("transform", d => `translate(${source.y},${source.x})`)
+        .remove();
+
+      // ----------------------------------------------------
+      // Cross-Link Data Flow Connections (Quant Evolution)
+      // ----------------------------------------------------
+      const crossLinks = [
+        { source: "Supabase DB", target: "loss_analyzer.py", label: "Queries resolved trades" },
+        { source: "loss_analyzer.py", target: "Self-Learning Adjustments", label: "Writes learned_adjustments.json" },
+        { source: "Self-Learning Adjustments", target: "analyzer.py", label: "Loads adjustments" },
+        { source: "technicals.py", target: "Market Regime Gate", label: "EMA & ADX regime checks" },
+        { source: "technicals.py", target: "Pullback Dip Entry", label: "Dip Zone extensions" },
+        { source: "technicals.py", target: "Personality Profiling", label: "Volatility scaling sizer" },
+        { source: "sector_rs.py", target: "Sector Relative Strength", label: "Sector Momentum score" },
+        { source: "position_monitor.py", target: "ATR Stop-Loss/TP", label: "Exit alert triggers" }
+      ];
+
+      const visibleNodesMap = new Map(nodes.map(n => [n.data.name, n]));
+      const activeCrossLinks = crossLinks.filter(cl => visibleNodesMap.has(cl.source) && visibleNodesMap.has(cl.target));
+
+      // Draw cross-link connection paths
+      const crossLinkSelection = zoomGroup.selectAll("path.cross-link")
+        .data(activeCrossLinks, d => `${d.source}-${d.target}`);
+
+      const crossLinkEnter = crossLinkSelection.enter().append("path")
+        .attr("class", "cross-link")
+        .style("fill", "none")
+        .style("stroke", "#d946ef")
+        .style("stroke-width", "1.5px")
+        .style("stroke-dasharray", "4 4")
+        .attr("marker-end", "url(#arrow)")
+        .style("opacity", 0.65)
+        .attr("d", d => {
+          const srcNode = visibleNodesMap.get(d.source);
+          const tgtNode = visibleNodesMap.get(d.target);
+          return crossDiagonal(srcNode, tgtNode);
+        });
+
+      const crossLinkUpdate = crossLinkSelection.merge(crossLinkEnter);
+
+      crossLinkUpdate.transition()
+        .duration(800)
+        .attr("d", d => {
+          const srcNode = visibleNodesMap.get(d.source);
+          const tgtNode = visibleNodesMap.get(d.target);
+          return crossDiagonal(srcNode, tgtNode);
+        });
+
+      crossLinkSelection.exit().transition()
+        .duration(800)
+        .style("opacity", 0)
+        .remove();
+
+      // Draw cross-link floating labels
+      const crossLinkLabels = zoomGroup.selectAll("text.cross-link-label")
+        .data(activeCrossLinks, d => `${d.source}-${d.target}-label`);
+
+      const crossLinkLabelEnter = crossLinkLabels.enter().append("text")
+        .attr("class", "cross-link-label")
+        .style("fill", "#f472b6")
+        .style("font-size", "8.5px")
+        .style("font-family", "var(--font-mono)")
+        .style("text-anchor", "middle")
+        .style("pointer-events", "none")
+        .style("opacity", 0.8)
+        .text(d => d.label);
+
+      const crossLinkLabelUpdate = crossLinkLabels.merge(crossLinkLabelEnter);
+
+      crossLinkLabelUpdate.transition()
+        .duration(800)
+        .attr("x", d => {
+          const srcNode = visibleNodesMap.get(d.source);
+          const tgtNode = visibleNodesMap.get(d.target);
+          return (srcNode.y + tgtNode.y) / 2;
+        })
+        .attr("y", d => {
+          const srcNode = visibleNodesMap.get(d.source);
+          const tgtNode = visibleNodesMap.get(d.target);
+          return (srcNode.x + tgtNode.x) / 2 - 8;
+        });
+
+      crossLinkLabels.exit().transition()
+        .duration(800)
+        .style("opacity", 0)
+        .remove();
+
+      // Store current positions for transitions
+      nodes.forEach(d => {
+        d.x0 = d.x;
+        d.y0 = d.y;
+      });
+    }
+
+    // Helper: Cubic Bezier diagonal path calculator (starts & ends at card boundaries)
+    function diagonal(s, d) {
+      const startX = d.y + 120;
+      const startY = d.x;
+      const endX = s.y - 120;
+      const endY = s.x;
+      return `M ${startX} ${startY}
+              C ${(startX + endX) / 2} ${startY},
+                ${(startX + endX) / 2} ${endY},
+                ${endX} ${endY}`;
+    }
+
+    // Helper: Cubic Bezier path calculator for arbitrary cross connections
+    function crossDiagonal(s, d) {
+      let startX, endX;
+      if (s.y < d.y) {
+        startX = s.y + 120;
+        endX = d.y - 120;
+      } else {
+        startX = s.y - 120;
+        endX = d.y + 120;
+      }
+      const startY = s.x;
+      const endY = d.x;
+      return `M ${startX} ${startY}
+              C ${(startX + endX) / 2} ${startY},
+                ${(startX + endX) / 2} ${endY},
+                ${endX} ${endY}`;
+    }
+
+    // ----------------------------------------------------
+    // Sidebar Details Update
+    // ----------------------------------------------------
+    function showSidebarDetails(data) {
+      const sidebar = document.getElementById("sidebar");
+      const badge = document.getElementById("details-badge");
+      const title = document.getElementById("details-title");
+      const fileLabel = document.getElementById("details-file");
+      const desc = document.getElementById("details-desc");
+      const techList = document.getElementById("details-tech");
+      const pointsList = document.getElementById("details-points");
+      const linkBtn = document.getElementById("details-action-link");
+
+      const style = getLayerStyle(data.type);
+
+      // Slide out details using Anime.js, update and slide back in
+      anime({
+        targets: "#sidebar-content",
+        opacity: [1, 0],
+        translateX: [0, 20],
+        duration: 200,
+        easing: 'easeInQuad',
+        complete: () => {
+          badge.textContent = data.type.toUpperCase();
+          badge.style.background = `${style.color}22`;
+          badge.style.color = style.color;
+          title.textContent = data.name;
+          fileLabel.textContent = data.file ? `file://${data.file}` : "System Architecture Block";
+
+          desc.textContent = data.description;
+
+          // Render tech pills
+          techList.innerHTML = "";
+          data.tech.forEach(t => {
+            const span = document.createElement("span");
+            span.className = "tech-pill";
+            span.textContent = t;
+            techList.appendChild(span);
+          });
+
+          // Render operations bullet list
+          pointsList.innerHTML = "";
+          data.operations.forEach(point => {
+            const li = document.createElement("li");
+            li.className = "key-point-item";
+            li.innerHTML = `<span class="key-point-bullet" style="color: ${style.color}">✦</span> <span>${point}</span>`;
+            pointsList.appendChild(li);
+          });
+
+          // Update file action btn link
+          if (data.file) {
+            linkBtn.style.display = "block";
+            linkBtn.href = `file:///Users/apple/market-advisor/${data.file}`;
+            linkBtn.style.background = `linear-gradient(135deg, ${style.color} 0%, #0c0d21 100%)`;
+            linkBtn.style.boxShadow = `0 4px 15px ${style.color}44`;
+          } else {
+            linkBtn.style.display = "none";
+          }
+
+          anime({
+            targets: "#sidebar-content",
+            opacity: [0, 1],
+            translateX: [20, 0],
+            duration: 350,
+            easing: 'easeOutCubic'
+          });
+        }
+      });
+    }
+
+    // ----------------------------------------------------
+    // Search Functionality
+    // ----------------------------------------------------
+    document.getElementById("search-input").addEventListener("input", function(e) {
+      const query = e.target.value.toLowerCase();
+      if (!query) return;
+
+      // Find node matching name
+      const allNodes = rootNode.descendants();
+      const match = allNodes.find(d => d.data.name.toLowerCase().includes(query) || (d.data.file && d.data.file.toLowerCase().includes(query)));
+
+      if (match) {
+        focusOnNode(match);
+      }
+    });
+
+    // Focus and pan-to Node helper
+    function focusOnNode(node) {
+      // Find parent path and expand if collapsed
+      let current = node;
+      while (current.parent) {
+        if (current.parent._children) {
+          current.parent.children = current.parent._children;
+          current.parent._children = null;
+        }
+        current = current.parent;
+      }
+      updateTree(rootNode);
+
+      // Pan & Zoom transition to target coordinates
+      const t = d3.zoomIdentity
+        .translate(width / 2.5 - node.y * 1.2, height / 2 - node.x * 1.2)
+        .scale(1.2);
+
+      svg.transition()
+        .duration(750)
+        .call(zoom.transform, t);
+
+      // Highlight target node
+      zoomGroup.selectAll("g.node-group")
+        .filter(d => d.data.name === node.data.name)
+        .select(".node-bg")
+        .transition()
+        .duration(300)
+        .attr("stroke-width", 4)
+        .transition()
+        .duration(600)
+        .attr("stroke-width", 1.5);
+
+      showSidebarDetails(node.data);
+    }
+
+    // Zoom Fit functionality
+    function zoomFit() {
+      const t = d3.zoomIdentity.translate(80, 50).scale(0.85);
+      svg.transition().duration(750).call(zoom.transform, t);
+    }
+
+    // Filter Layer visibility
+    function filterLayer(layerType) {
+      zoomGroup.selectAll("g.node-group")
+        .transition()
+        .duration(300)
+        .style("opacity", d => d.data.type === layerType || d.data.type === 'root' ? 1 : 0.15);
+
+      zoomGroup.selectAll("path.link-path")
+        .transition()
+        .duration(300)
+        .style("opacity", d => d.data.type === layerType ? 0.85 : 0.05);
+    }
+
+    // Reset view filter on double-clicking SVG background
+    svg.on("dblclick.zoom", null).on("dblclick", () => {
+      zoomGroup.selectAll("g.node-group").transition().duration(300).style("opacity", 1);
+      zoomGroup.selectAll("path.link-path").transition().duration(300).style("opacity", 0.35);
+    });
+
+    // ----------------------------------------------------
+    // Auto-Tour Guide System
+    // ----------------------------------------------------
+    let tourActive = false;
+    let tourStepIndex = 0;
+    let tourTimer = null;
+
+    const tourSteps = [
+      { name: "Market Advisor System", title: "Welcome to Market Advisor", delay: 6000 },
+      { name: "Frontend (Next.js client)", title: "Frontend Client Architecture", delay: 5000 },
+      { name: "Dashboard.tsx", title: "The Advisor Hub Widget", delay: 5500 },
+      { name: "UserWorkspace.tsx", title: "Active Positions & Diagnostic Checks", delay: 5500 },
+      { name: "BacktestSimulator.tsx", title: "3-Year Multi-Factor Backtester", delay: 5500 },
+      { name: "Backend (FastAPI)", title: "Asynchronous Python Backend", delay: 5000 },
+      { name: "analyzer.py", title: "Scan Orchestrator & pre-fetching", delay: 5500 },
+      { name: "technicals.py", title: "Vectorized Momentum Math Core", delay: 5500 },
+      { name: "event_risk.py", title: "Earnings & Dividend Safety Gates", delay: 5500 },
+      { name: "loss_analyzer.py", title: "Self-Learning Loss Feedback Loop", delay: 6000 },
+      { name: "position_monitor.py", title: "Trailing Floor Exit Controls", delay: 6000 },
+      { name: "Quant Logic & Evolution", title: "Algorithmic Rules & Operations", delay: 5000 },
+      { name: "Pullback Dip Entry", title: "Dip Entry Extrusion Zones", delay: 5500 },
+      { name: "Personality Profiling", title: "Cap-Segment Risk Scalers", delay: 5500 }
+    ];
+
+    function toggleTour() {
+      const panel = document.getElementById("tour-panel");
+      const playIcon = document.getElementById("play-icon");
+      const pauseIcon = document.getElementById("pause-icon");
+
+      if (tourActive) {
+        // Pause
+        tourActive = false;
+        clearTimeout(tourTimer);
+        playIcon.style.display = "block";
+        pauseIcon.style.display = "none";
+        panel.classList.remove("active");
+      } else {
+        // Play
+        tourActive = true;
+        playIcon.style.display = "none";
+        pauseIcon.style.display = "block";
+        panel.classList.add("active");
+        runTourStep();
+      }
+    }
+
+    function runTourStep() {
+      if (!tourActive) return;
+
+      const step = tourSteps[tourStepIndex];
+      const allNodes = rootNode.descendants();
+      const node = allNodes.find(d => d.data.name === step.name);
+
+      if (node) {
+        document.getElementById("tour-title-text").textContent = `Tour: ${step.title}`;
+        focusOnNode(node);
+        
+        // Progress bar animation
+        const progBar = document.getElementById("tour-progress-bar");
+        progBar.style.width = "0%";
+        
+        anime({
+          targets: progBar,
+          width: "100%",
+          duration: step.delay,
+          easing: "linear"
+        });
+      }
+
+      tourStepIndex = (tourStepIndex + 1) % tourSteps.length;
+      tourTimer = setTimeout(runTourStep, step.delay);
+    }
+
+    // ----------------------------------------------------
+    // Initialize Tree Layout
+    // ----------------------------------------------------
+    updateTree(rootNode);
+    zoomFit();
+
+  </script>
+</body>
+</html>
