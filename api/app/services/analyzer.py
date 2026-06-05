@@ -469,7 +469,7 @@ def run_full_analysis(
             stop_loss = _stop_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
 
             # BUG-05: Minimum R:R check as a final gate
-            entry_price = item["metrics"].get("price")
+            entry_price = item.get("ideal_entry_price") or item["metrics"].get("price")
             if entry_price and stop_loss and target_price and stop_loss < entry_price:
                 rr = (target_price - entry_price) / (entry_price - stop_loss)
                 if rr < 2.0:
@@ -652,6 +652,16 @@ def run_full_analysis(
                             supabase_store.insert_news(client, item["news_rows"])
                         except Exception:
                             pass
+
+        # Deduplicate signals by (symbol, signal_date, signal_type)
+        seen_signals = set()
+        deduped_signals = []
+        for sig in signals:
+            key = (sig.get("symbol"), sig.get("signal_date"), sig.get("signal_type"))
+            if key not in seen_signals:
+                seen_signals.add(key)
+                deduped_signals.append(sig)
+        signals = deduped_signals
 
         supabase_store.insert_recommendations(client, recommendations)
         supabase_store.insert_signals(client, signals)
@@ -1621,11 +1631,11 @@ def _target_for_mode(price: float | None, mode: str, atr_levels: dict | None = N
         return atr_levels["target_price"]
     multipliers = {
         "intraday": 1.02,
-        "swing": 1.05,
-        "longterm": 1.15,
-        "future": 1.05,
+        "swing": 1.10,
+        "longterm": 1.20,
+        "future": 1.10,
     }
-    return round(price * multipliers.get(mode, 1.05), 2)
+    return round(price * multipliers.get(mode, 1.10), 2)
 
 
 def _stop_for_mode(price: float | None, mode: str, atr_levels: dict | None = None) -> float | None:
