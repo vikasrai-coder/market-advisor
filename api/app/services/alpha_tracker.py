@@ -109,12 +109,48 @@ def record_alerts(alerts: list[dict[str, Any]]) -> int:
 
     Returns number of alerts recorded.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     with _lock:
         cache = _load_cache()
         today = date.today().isoformat()
 
         recorded = 0
         for alert in alerts:
+            # BUG-04: Alert Deduplication
+            is_duplicate = any(
+                existing.get("symbol") == alert["symbol"] and
+                existing.get("alert_date") == today and
+                existing.get("entry_price") == alert["entry_price"]
+                for existing in cache.get("alerts_history", [])
+            )
+            if is_duplicate:
+                print(f"[AlphaTracker] Skipping duplicate alert for {alert['symbol']} on {today} at {alert['entry_price']}")
+                continue
+
+            # BUG-03: Risk/Reward Gate
+            entry_price = alert.get("entry_price")
+            target_price = alert.get("target_price")
+            stop_loss = alert.get("stop_loss")
+            
+            try:
+                ep = float(entry_price) if entry_price is not None else 0.0
+                tp = float(target_price) if target_price is not None else 0.0
+                sl = float(stop_loss) if stop_loss is not None else 0.0
+            except (ValueError, TypeError):
+                ep, tp, sl = 0.0, 0.0, 0.0
+
+            if ep - sl <= 0:
+                rr = 0.0
+            else:
+                rr = (tp - ep) / (ep - sl)
+                
+            if rr < 2.0:
+                logger.warning(f"Poor R:R = {rr}")
+                print(f"[AlphaTracker] Rejecting alert for {alert['symbol']} due to poor R:R = {rr:.2f}")
+                continue
+
             entry = {
                 "id": alert.get("id", ""),
                 "symbol": alert["symbol"],

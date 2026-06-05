@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from typing import Any, Callable
 import pandas as pd
 import yfinance as yf
+import logging
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.scan_modes import ScanConfig, get_config
@@ -35,6 +37,8 @@ def run_full_analysis(
         target_date: ISO date string for "future" mode (e.g. "2025-06-15").
         progress_callback: Optional progress reporter.
     """
+    if mode == "future":
+        raise NotImplementedError("Future mode not yet implemented")
     global _last_result
     cfg = get_config(mode)
 
@@ -80,6 +84,10 @@ def run_full_analysis(
             macro_headlines = " | ".join(a.get("title", "") for a in macro_articles[:3])
     except Exception as exc:
         print(f"Error fetching macro/NIFTY news: {exc}")
+
+    _macro_veto = False
+    if macro_sentiment_score < 40:
+        _macro_veto = True
 
     # ENHANCEMENT #4 — Market Breadth Gate (runs ONCE, before any stock is evaluated)
     try:
@@ -360,7 +368,13 @@ def run_full_analysis(
     scored.sort(key=lambda x: x["composite_score"], reverse=True)
     # Only pass qualifying stocks (score >= threshold) to top buys selection
     qualifying = [s for s in scored if s.get("composite_score", 0) >= min_composite_score]
-    top_buys = _select_diversified_top_buys(qualifying, count=cfg.top_picks)
+    if _macro_veto:
+        qualifying = []
+    normal_top_buys = _select_diversified_top_buys(qualifying, count=cfg.top_picks)
+    if macro_sentiment_score < 40:
+        top_buys = []
+    else:
+        top_buys = normal_top_buys
 
     recommendations: list[dict[str, Any]] = []
     signals: list[dict[str, Any]] = []
@@ -379,7 +393,7 @@ def run_full_analysis(
                 "Rule-based quant filter passed",
             ]
             if macro_sentiment_score < 45:
-                reasoning += f" Warning: Bearish NIFTY news sentiment ({macro_sentiment_score:.0f}/100) suggests high risk of gap-down opening."
+                reasoning += f" Warning: Bearish NIFTY news sentiment ({macro_sentiment_score:.0f}/100) suggests risk of gap-down opening."
                 key_factors.append("Bearish macro environment warning")
                 
             insight = {
@@ -431,7 +445,7 @@ def run_full_analysis(
     with ThreadPoolExecutor(max_workers=10) as ai_pool:
         buy_futures = [
             ai_pool.submit(_fetch_buy_insight, rank, item)
-            for rank, item in enumerate(top_buys, start=1)
+            for rank, item in enumerate(normal_top_buys, start=1)
         ]
         sell_futures = [
             ai_pool.submit(_fetch_sell_rationale, item)
@@ -443,6 +457,20 @@ def run_full_analysis(
             rank, item, insight = future.result()
             target_price = _target_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
             stop_loss = _stop_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
+
+            # BUG-03: Minimum R:R check as a final gate
+            price = item["metrics"].get("price")
+            if price and target_price and stop_loss:
+                risk = price - stop_loss
+                if risk <= 0:
+                    rr = 0.0
+                else:
+                    rr = (target_price - price) / risk
+                
+                if rr < 1.5:
+                    logger.warning(f"Rejecting alert for {item['symbol']} due to poor R:R = {rr:.2f}")
+                    print(f"[Analyzer] Rejecting alert for {item['symbol']} due to poor R:R = {rr:.2f}")
+                    continue
 
             # Quantitative relative valuation scoring vs sector medians
             item_sector = item["profile"].get("sector")
@@ -456,67 +484,95 @@ def run_full_analysis(
             confirming_signals = item.get("confirming_signals_list", [])
             tier_info = classify_trade_tier(item["composite_score"], confirming_signals)
 
-            rec = {
-                "id": str(uuid.uuid4()),
-                "run_id": run_id,
-                "symbol": item["symbol"],
-                "cap_segment": item["profile"].get("cap_segment"),
-                "rank": rank,
-                "action": "buy",
-                "trade_mode": cfg.mode,
-                "composite_score": item["composite_score"],
-                "trend_score": item["metrics"].get("trend_score"),
-                "news_score": item["news_score"],
-                "technical_score": item["metrics"].get("technical_score"),
-                "fundamental_score": item["metrics"].get("fundamental_score"),
-                "ai_confidence": insight.get("confidence", 0.7) if isinstance(insight, dict) else 0.7,
-                "reasoning": insight.get("reasoning", "") if isinstance(insight, dict) else str(insight),
-                "key_factors": insight.get("key_factors", []) if isinstance(insight, dict) else [],
-                "signal_date": signal_date.isoformat(),
-                "trade_date": trade_date.isoformat(),
-                "target_price": target_price,
-                "stop_loss": stop_loss,
-                "performance_status": "pending",
-                "vwap": item["metrics"].get("vwap"),
-                "bullish_crossover": item["metrics"].get("bullish_crossover"),
-                "golden_cross": item["metrics"].get("golden_cross"),
-                "range_52w_pct": item["metrics"].get("range_52w_pct"),
-                "pe_ratio": item["metrics"].get("pe_ratio"),
-                "dividend_yield": item["metrics"].get("dividend_yield"),
-                "is_undervalued": is_undervalued,
-                "overnight_gap_down_warning": macro_sentiment_score < 30,
-                # Prompt 3 entries
-                "entry_type": item.get("entry_type", "immediate"),
-                "ideal_entry_price": item.get("ideal_entry_price"),
-                "entry_note": item.get("entry_note"),
-                "trade_tier": tier_info["tier"],
-                "position_size_pct": tier_info["position_size_pct"],
-                "confirming_signals": tier_info["confirming_signals"],
-                "stocks": {
-                    "name": item["profile"].get("name"),
-                    "sector": item["profile"].get("sector"),
-                    "pe_ratio": item["profile"].get("pe_ratio"),
-                    "market_cap": item["profile"].get("market_cap"),
-                    "is_undervalued": is_undervalued,
-                },
-            }
-            recommendations.append(rec)
-            signals.append(
-                {
+            reasoning = insight.get("reasoning", "") if isinstance(insight, dict) else str(insight)
+            if item.get("overbought_warning"):
+                if "Overbought — reduced confidence" not in reasoning:
+                    reasoning = reasoning.rstrip(".") + ". Overbought — reduced confidence."
+
+            sentiment_gate_status = "passed" if macro_sentiment_score >= 40 else "overridden"
+
+            if macro_sentiment_score >= 40:
+                rec = {
                     "id": str(uuid.uuid4()),
                     "run_id": run_id,
                     "symbol": item["symbol"],
-                    "signal_type": "buy",
+                    "cap_segment": item["profile"].get("cap_segment"),
+                    "rank": rank,
+                    "action": "buy",
                     "trade_mode": cfg.mode,
-                    "strength": _strength(item["composite_score"]),
-                    "price_at_signal": item["metrics"].get("price"),
+                    "composite_score": item["composite_score"],
+                    "trend_score": item["metrics"].get("trend_score"),
+                    "news_score": item["news_score"],
+                    "technical_score": item["metrics"].get("technical_score"),
+                    "fundamental_score": item["metrics"].get("fundamental_score"),
+                    "ai_confidence": insight.get("confidence", 0.7) if isinstance(insight, dict) else 0.7,
+                    "reasoning": reasoning,
+                    "key_factors": insight.get("key_factors", []) if isinstance(insight, dict) else [],
+                    "signal_date": signal_date.isoformat(),
+                    "trade_date": trade_date.isoformat(),
                     "target_price": target_price,
                     "stop_loss": stop_loss,
-                    "rationale": (insight.get("reasoning", "") if isinstance(insight, dict) else str(insight))[:500],
-                    "signal_date": signal_date.isoformat(),
-                    "planned_trade_date": trade_date.isoformat(),
+                    "performance_status": "pending",
+                    "vwap": item["metrics"].get("vwap"),
+                    "bullish_crossover": item["metrics"].get("bullish_crossover"),
+                    "golden_cross": item["metrics"].get("golden_cross"),
+                    "range_52w_pct": item["metrics"].get("range_52w_pct"),
+                    "pe_ratio": item["metrics"].get("pe_ratio"),
+                    "dividend_yield": item["metrics"].get("dividend_yield"),
+                    "is_undervalued": is_undervalued,
+                    "overnight_gap_down_warning": macro_sentiment_score < 30,
+                    # Prompt 3 entries
+                    "entry_type": item.get("entry_type", "immediate"),
+                    "ideal_entry_price": item.get("ideal_entry_price"),
+                    "entry_note": item.get("entry_note"),
+                    "trade_tier": tier_info["tier"],
+                    "position_size_pct": tier_info["position_size_pct"],
+                    "confirming_signals": tier_info["confirming_signals"],
+                    "stocks": {
+                        "name": item["profile"].get("name"),
+                        "sector": item["profile"].get("sector"),
+                        "pe_ratio": item["profile"].get("pe_ratio"),
+                        "market_cap": item["profile"].get("market_cap"),
+                        "is_undervalued": is_undervalued,
+                    },
+                    "sentiment_gate": sentiment_gate_status,
                 }
-            )
+                recommendations.append(rec)
+                signals.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "run_id": run_id,
+                        "symbol": item["symbol"],
+                        "signal_type": "buy",
+                        "trade_mode": cfg.mode,
+                        "strength": _strength(item["composite_score"]),
+                        "price_at_signal": item["metrics"].get("price"),
+                        "target_price": target_price,
+                        "stop_loss": stop_loss,
+                        "rationale": reasoning[:500],
+                        "signal_date": signal_date.isoformat(),
+                        "planned_trade_date": trade_date.isoformat(),
+                        "sentiment_gate": sentiment_gate_status,
+                    }
+                )
+            else:
+                signals.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "run_id": run_id,
+                        "symbol": item["symbol"],
+                        "signal_type": "hold",
+                        "trade_mode": cfg.mode,
+                        "strength": "weak",
+                        "price_at_signal": item["metrics"].get("price"),
+                        "target_price": target_price,
+                        "stop_loss": stop_loss,
+                        "rationale": f"HIGH RISK — bearish market. {reasoning}"[:500],
+                        "signal_date": signal_date.isoformat(),
+                        "planned_trade_date": trade_date.isoformat(),
+                        "sentiment_gate": sentiment_gate_status,
+                    }
+                )
             
         # Process sell results
         for future in as_completed(sell_futures):
@@ -778,6 +834,14 @@ def _analyze_symbol_swing(
 
     # FIX #6 — New composite score formula
     rsi = metrics.get("rsi") or 50.0
+
+    # BUG-01: RSI overbought gate check
+    overbought_warning = False
+    if rsi > 75:
+        return {**_zero, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
+    elif 70 <= rsi <= 75:
+        overbought_warning = True
+
     macd = metrics.get("macd")
     macd_signal_val = metrics.get("macd_signal")
     macd_cross = bool(macd is not None and macd_signal_val is not None and macd > macd_signal_val)
@@ -815,6 +879,8 @@ def _analyze_symbol_swing(
         price_vs_sma=price_vs_sma,
         atr_levels=atr_levels,
     )
+    if overbought_warning:
+        composite = max(0.0, composite - 20)
 
     # Apply Stock Personality min volume penalty
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
@@ -900,6 +966,7 @@ def _analyze_symbol_swing(
         "composite_score": composite,
         "news_rows": news_rows,
         "atr_levels": atr_levels,
+        "overbought_warning": overbought_warning,
         # Market context for Llama prompt (Enhancement #5)
         "market_context": {
             "sector_rs_status": sector_rs["status"],
@@ -1003,6 +1070,13 @@ def _analyze_symbol_intraday(
     if rsi < 45:
         return {**_blocked, "rsi_blocked": True}
 
+    # BUG-01: RSI overbought gate check
+    overbought_warning = False
+    if rsi > 78:
+        return {**_blocked, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
+    elif 70 <= rsi <= 75:
+        overbought_warning = True
+
     # FIX #3 — Volume confirmation
     vol_conf = technicals.get_volume_confirmation(history)
 
@@ -1086,6 +1160,8 @@ def _analyze_symbol_intraday(
         price_vs_sma=price_vs_sma,
         atr_levels=atr_levels,
     )
+    if overbought_warning:
+        composite = max(0.0, composite - 20)
 
     # Apply Stock Personality min volume penalty
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
@@ -1162,6 +1238,7 @@ def _analyze_symbol_intraday(
         "composite_score": composite,
         "news_rows": [],
         "atr_levels": atr_levels,
+        "overbought_warning": overbought_warning,
         # Market context for Llama prompt
         "market_context": {
             "sector_rs_status": sector_rs["status"],
@@ -1296,6 +1373,14 @@ def _analyze_symbol_longterm(
 
     # FIX #6 — New composite score calculation
     rsi = metrics.get("rsi") or 50.0
+
+    # BUG-01: RSI overbought gate check
+    overbought_warning = False
+    if rsi > 75:
+        return {**_zero, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
+    elif 70 <= rsi <= 75:
+        overbought_warning = True
+
     macd = metrics.get("macd")
     macd_signal_val = metrics.get("macd_signal")
     macd_cross = bool(macd is not None and macd_signal_val is not None and macd > macd_signal_val)
@@ -1332,6 +1417,8 @@ def _analyze_symbol_longterm(
         price_vs_sma=price_vs_sma,
         atr_levels=atr_levels,
     )
+    if overbought_warning:
+        composite = max(0.0, composite - 20)
 
     # Apply Stock Personality min volume penalty
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
@@ -1429,6 +1516,7 @@ def _analyze_symbol_longterm(
         "composite_score": composite,
         "news_rows": news_rows,
         "atr_levels": atr_levels,
+        "overbought_warning": overbought_warning,
         # Market context for Llama prompt
         "market_context": {
             "sector_rs_status": sector_rs["status"],

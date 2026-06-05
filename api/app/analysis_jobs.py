@@ -47,6 +47,10 @@ def _run_job(job_id: str, mode: str = "swing", target_date: str | None = None) -
 def start_job(mode: str = "swing", target_date: str | None = None) -> str:
     from app.services import market_data
 
+    existing = get_running_job()
+    if existing:
+        return existing["job_id"]
+
     job_id = str(uuid.uuid4())
     total = len(market_data.get_watchlist())
     with _lock:

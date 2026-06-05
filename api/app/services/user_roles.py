@@ -242,15 +242,70 @@ def get_admin_trades() -> List[Dict[str, Any]]:
     return list(cache.get("trades", {}).values())
 
 
-def record_admin_trade(symbol: str, quantity: float, buy_price: float) -> bool:
+def record_admin_trade(
+    symbol: str,
+    quantity: float,
+    buy_price: float,
+    target_price: float | None = None,
+    stop_loss: float | None = None,
+    source_alert_id: str | None = None,
+) -> bool:
     norm_sym = normalize_symbol(symbol)
     client = get_client()
 
+    from datetime import timezone
+    now = datetime.utcnow()
+
+    def _parse_utc_datetime(dt_str: str) -> datetime:
+        normalized = dt_str.replace(" ", "T").replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    # BUG-05: Check duplicates (Open trade of the same symbol in last 10 minutes)
+    if client:
+        try:
+            res = client.table("admin_trades").select("*").eq("symbol", norm_sym).eq("trade_status", "open").execute()
+            if res and res.data:
+                for row in res.data:
+                    created_at_str = row.get("created_at")
+                    if created_at_str:
+                        dt = _parse_utc_datetime(created_at_str)
+                        diff = (now - dt).total_seconds()
+                        if 0 <= diff < 600:
+                            raise ValueError("Duplicate open trade detected")
+        except ValueError as ve:
+            raise ve
+        except Exception as exc:
+            logger.error(f"Supabase duplicate check failed: {exc}")
+
+    # Check local JSON cache for duplicate open trades
+    cache = _read_json_cache(TRADES_CACHE_FILE)
+    trades = list(cache.get("trades", {}).values())
+    for t in trades:
+        if t.get("symbol") == norm_sym and t.get("trade_status") == "open":
+            created_at_str = t.get("created_at")
+            if created_at_str:
+                try:
+                    dt = _parse_utc_datetime(created_at_str)
+                    diff = (now - dt).total_seconds()
+                    if 0 <= diff < 600:
+                        raise ValueError("Duplicate open trade detected")
+                except ValueError as ve:
+                    if str(ve) == "Duplicate open trade detected":
+                        raise ve
+                    pass
+
+    # BUG-06: Persist SL and target in trade records
     trade_data = {
         "symbol": norm_sym,
         "shares_quantity": quantity,
         "buy_price": buy_price,
         "trade_status": "open",
+        "target_price": target_price,
+        "stop_loss": stop_loss,
+        "source_alert_id": source_alert_id,
     }
 
     if client:
@@ -260,17 +315,32 @@ def record_admin_trade(symbol: str, quantity: float, buy_price: float) -> bool:
             client.table("admin_trades").insert(trade_data).execute()
             return True
         except Exception as exc:
-            logger.error(f"Supabase admin trade record failed: {exc}")
+            err_msg = str(exc).lower()
+            if "column" in err_msg or "target_price" in err_msg or "stop_loss" in err_msg or "source_alert_id" in err_msg:
+                # Fallback: remove missing columns dynamically
+                fallback_data = {
+                    "symbol": norm_sym,
+                    "shares_quantity": quantity,
+                    "buy_price": buy_price,
+                    "trade_status": "open",
+                }
+                try:
+                    client.table("admin_trades").insert(fallback_data).execute()
+                    logger.warning("Supabase admin trade record succeeded with fallback (some columns missing in database).")
+                    return True
+                except Exception as inner_exc:
+                    logger.error(f"Supabase admin trade record fallback failed: {inner_exc}")
+            else:
+                logger.error(f"Supabase admin trade record failed: {exc}")
 
     # Local fallback
-    cache = _read_json_cache(TRADES_CACHE_FILE)
     if "trades" not in cache:
         cache["trades"] = {}
         
     trade_id = str(uuid.uuid4())
     trade_data["id"] = trade_id
     trade_data["display_symbol"] = display_symbol(norm_sym)
-    trade_data["created_at"] = datetime.utcnow().isoformat()
+    trade_data["created_at"] = now.isoformat()
     cache["trades"][trade_id] = trade_data
     _write_json_cache(TRADES_CACHE_FILE, cache)
     return True

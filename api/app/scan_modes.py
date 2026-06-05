@@ -38,6 +38,11 @@ class ScanConfig:
     top_picks: int = 10
     diversified: bool = True
 
+    def __post_init__(self):
+        total_weight = self.weight_trend + self.weight_technical + self.weight_news + self.weight_fundamental
+        if abs(total_weight - 1.0) > 0.001:
+            raise ValueError(f"Scoring weights must sum to 1.0. Got {total_weight} for mode {self.mode}")
+
 
 INTRADAY = ScanConfig(
     mode="intraday",

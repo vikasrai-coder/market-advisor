@@ -175,18 +175,34 @@ def run_backtest_simulation(
             for idx, row in candles_to_check.iterrows():
                 high = float(row["High"])
                 low = float(row["Low"])
+                close_price = float(row["Close"])
+                open_price = float(row["Open"])
                 candle_date = idx.to_pydatetime().date() if isinstance(idx, pd.Timestamp) else start_date
 
-                if low <= stop_loss:
-                    outcome = "stopped_out"
-                    exit_price = stop_loss
-                    exit_date = candle_date.isoformat()
-                    break
-                elif high >= target_price:
-                    outcome = "target_hit"
-                    exit_price = target_price
-                    exit_date = candle_date.isoformat()
-                    break
+                # Green candle: target checked first
+                if close_price >= open_price:
+                    if high >= target_price:
+                        outcome = "target_hit"
+                        exit_price = target_price
+                        exit_date = candle_date.isoformat()
+                        break
+                    elif low <= stop_loss:
+                        outcome = "stopped_out"
+                        exit_price = stop_loss
+                        exit_date = candle_date.isoformat()
+                        break
+                # Red candle: stop checked first
+                else:
+                    if low <= stop_loss:
+                        outcome = "stopped_out"
+                        exit_price = stop_loss
+                        exit_date = candle_date.isoformat()
+                        break
+                    elif high >= target_price:
+                        outcome = "target_hit"
+                        exit_price = target_price
+                        exit_date = candle_date.isoformat()
+                        break
             
             # If not hit, close at final candle
             if outcome == "held":

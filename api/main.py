@@ -150,6 +150,9 @@ class AdminTradeRequest(BaseModel):
     symbol: str
     quantity: float
     buy_price: float
+    target_price: float | None = None
+    stop_loss: float | None = None
+    source_alert_id: str | None = None
 
 
 class AdminTradeCloseRequest(BaseModel):
@@ -621,8 +624,17 @@ def admin_get_trades_endpoint():
 def admin_buy_trade_endpoint(req: AdminTradeRequest):
     try:
         from app.services.user_roles import record_admin_trade
-        success = record_admin_trade(req.symbol, req.quantity, req.buy_price)
+        success = record_admin_trade(
+            req.symbol,
+            req.quantity,
+            req.buy_price,
+            target_price=req.target_price,
+            stop_loss=req.stop_loss,
+            source_alert_id=req.source_alert_id,
+        )
         return {"success": success}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

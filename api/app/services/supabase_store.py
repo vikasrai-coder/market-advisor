@@ -16,12 +16,12 @@ RECOMMENDATION_COLUMNS = {
     "signal_date", "trade_date", "cap_segment", "trade_mode",
     "target_price", "stop_loss", "performance_status", "exit_price",
     "entry_type", "ideal_entry_price", "entry_note", "trade_tier",
-    "position_size_pct", "confirming_signals",
+    "position_size_pct", "confirming_signals", "sentiment_gate",
 }
 SIGNAL_COLUMNS = {
     "id", "run_id", "symbol", "signal_type", "strength", "price_at_signal",
     "target_price", "stop_loss", "rationale", "signal_date", "planned_trade_date",
-    "trade_mode",
+    "trade_mode", "sentiment_gate",
 }
 NEWS_COLUMNS = {
     "symbol", "title", "summary", "url", "source", "sentiment_label",
@@ -99,10 +99,17 @@ def insert_recommendations(client: Client, rows: list[dict[str, Any]]) -> None:
         try:
             client.table("recommendations").insert(cleaned).execute()
         except Exception as exc:
-            # Fallback: if table doesn't have trade_mode yet, strip it and insert
-            if "trade_mode" in str(exc).lower() or "column" in str(exc).lower():
-                cols_without_mode = RECOMMENDATION_COLUMNS - {"trade_mode"}
-                cleaned_fallback = [_pick(r, cols_without_mode) for r in rows]
+            err_msg = str(exc).lower()
+            if "trade_mode" in err_msg or "sentiment_gate" in err_msg or "column" in err_msg:
+                # Fallback: remove potential missing columns dynamically
+                to_remove = set()
+                if "trade_mode" in err_msg or "column" in err_msg:
+                    to_remove.add("trade_mode")
+                if "sentiment_gate" in err_msg or "column" in err_msg:
+                    to_remove.add("sentiment_gate")
+                
+                cols = RECOMMENDATION_COLUMNS - to_remove
+                cleaned_fallback = [_pick(r, cols) for r in rows]
                 client.table("recommendations").insert(cleaned_fallback).execute()
             else:
                 raise exc
@@ -121,10 +128,17 @@ def insert_signals(client: Client, rows: list[dict[str, Any]]) -> None:
         try:
             client.table("trading_signals").insert(cleaned).execute()
         except Exception as exc:
-            # Fallback: if table doesn't have trade_mode yet, strip it and insert
-            if "trade_mode" in str(exc).lower() or "column" in str(exc).lower():
-                cols_without_mode = SIGNAL_COLUMNS - {"trade_mode"}
-                cleaned_fallback = [_pick(r, cols_without_mode) for r in rows]
+            err_msg = str(exc).lower()
+            if "trade_mode" in err_msg or "sentiment_gate" in err_msg or "column" in err_msg:
+                # Fallback: remove potential missing columns dynamically
+                to_remove = set()
+                if "trade_mode" in err_msg or "column" in err_msg:
+                    to_remove.add("trade_mode")
+                if "sentiment_gate" in err_msg or "column" in err_msg:
+                    to_remove.add("sentiment_gate")
+                
+                cols = SIGNAL_COLUMNS - to_remove
+                cleaned_fallback = [_pick(r, cols) for r in rows]
                 client.table("trading_signals").insert(cleaned_fallback).execute()
             else:
                 raise exc
