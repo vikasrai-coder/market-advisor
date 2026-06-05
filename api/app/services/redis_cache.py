@@ -12,7 +12,11 @@ _redis_client: Optional[redis.Redis] = None
 def get_redis_client() -> Optional[redis.Redis]:
     global _redis_client
     if _redis_client is not None:
-        return _redis_client
+        try:
+            _redis_client.ping()
+            return _redis_client
+        except Exception:
+            _redis_client = None  # force reconnect
     
     if not settings.redis_url:
         return None

@@ -528,7 +528,10 @@ def login_endpoint(req: LoginRequest):
     
     # 1. Check master designated admin credentials
     from app.services.user_roles import ADMIN_EMAIL, get_user_role_profile, get_all_roles_profiles
-    if email.lower() == ADMIN_EMAIL.lower() and password == "DellCompaq@123":
+    import os
+    import bcrypt
+    admin_password = os.getenv("ADMIN_PASSWORD", "MarketAdvisorRotated#2026")
+    if email.lower() == ADMIN_EMAIL.lower() and password == admin_password:
         # Ensure role profile is seeded
         profile = get_user_role_profile("admin-vikas-id", ADMIN_EMAIL)
         return {
@@ -541,13 +544,15 @@ def login_endpoint(req: LoginRequest):
     # 2. Check offline users registry
     profiles = get_all_roles_profiles()
     for p in profiles:
-        if p["email"].lower() == email.lower() and p.get("offline_password") == password:
-            return {
-                "user_id": p["user_id"],
-                "email": p["email"],
-                "role": p["role"],
-                "permissions": p["permissions"],
-            }
+        if p["email"].lower() == email.lower():
+            hashed_pw = p.get("offline_password_hash")
+            if hashed_pw and bcrypt.checkpw(password.encode(), hashed_pw.encode()):
+                return {
+                    "user_id": p["user_id"],
+                    "email": p["email"],
+                    "role": p["role"],
+                    "permissions": p["permissions"],
+                }
             
     # Check if there is an auth user inside Supabase (if Supabase is active)
     # Since Supabase handles client logins directly, this endpoint acts as a complete fallback

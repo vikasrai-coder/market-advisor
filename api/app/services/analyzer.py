@@ -76,6 +76,8 @@ def run_full_analysis(
     macro_articles = []
     macro_sentiment_score = 50.0
     macro_headlines = ""
+    min_composite_score_override = None
+    overnight_gap_down_flag = False
     try:
         from app.services.google_news import fetch_google_news_rss
         macro_articles = fetch_google_news_rss("NIFTY 50", limit=5)
@@ -84,6 +86,10 @@ def run_full_analysis(
             macro_headlines = " | ".join(a.get("title", "") for a in macro_articles[:3])
     except Exception as exc:
         print(f"Error fetching macro/NIFTY news: {exc}")
+
+    if macro_sentiment_score < 35:
+        min_composite_score_override = 80.0  # raise bar significantly
+        overnight_gap_down_flag = True
 
     _macro_veto = False
     if macro_sentiment_score < 40:
@@ -358,6 +364,10 @@ def run_full_analysis(
     if min_score_override is not None:
         min_composite_score = max(min_composite_score, float(min_score_override))
 
+    # Macro sentiment minimum score override
+    if min_composite_score_override is not None:
+        min_composite_score = max(min_composite_score, min_composite_score_override)
+
     # ENHANCEMENT #4 — breadth caution override (75 on uncertain days)
     if _breadth_threshold_override is not None:
         min_composite_score = max(min_composite_score, _breadth_threshold_override)
@@ -458,19 +468,12 @@ def run_full_analysis(
             target_price = _target_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
             stop_loss = _stop_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
 
-            # BUG-03: Minimum R:R check as a final gate
-            price = item["metrics"].get("price")
-            if price and target_price and stop_loss:
-                risk = price - stop_loss
-                if risk <= 0:
-                    rr = 0.0
-                else:
-                    rr = (target_price - price) / risk
-                
-                if rr < 1.5:
-                    logger.warning(f"Rejecting alert for {item['symbol']} due to poor R:R = {rr:.2f}")
-                    print(f"[Analyzer] Rejecting alert for {item['symbol']} due to poor R:R = {rr:.2f}")
-                    continue
+            # BUG-05: Minimum R:R check as a final gate
+            entry_price = item["metrics"].get("price")
+            if entry_price and stop_loss and target_price and stop_loss < entry_price:
+                rr = (target_price - entry_price) / (entry_price - stop_loss)
+                if rr < 2.0:
+                    continue  # skip this recommendation
 
             # Quantitative relative valuation scoring vs sector medians
             item_sector = item["profile"].get("sector")
@@ -520,7 +523,7 @@ def run_full_analysis(
                     "pe_ratio": item["metrics"].get("pe_ratio"),
                     "dividend_yield": item["metrics"].get("dividend_yield"),
                     "is_undervalued": is_undervalued,
-                    "overnight_gap_down_warning": macro_sentiment_score < 30,
+                    "overnight_gap_down_warning": macro_sentiment_score < 30 or overnight_gap_down_flag,
                     # Prompt 3 entries
                     "entry_type": item.get("entry_type", "immediate"),
                     "ideal_entry_price": item.get("ideal_entry_price"),
@@ -707,12 +710,14 @@ def _analyze_symbol_dispatch(
     daily_history_df: Any = None,
 ) -> dict[str, Any]:
     """Route to the mode-appropriate symbol analyzer."""
-    if cfg.mode == "intraday":
+    if cfg.mode == "future":
+        raise NotImplementedError("Future mode not yet implemented")
+    elif cfg.mode == "intraday":
         return _analyze_symbol_intraday(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score, sector_cache, learned, daily_history_df)
     elif cfg.mode == "longterm":
         return _analyze_symbol_longterm(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score, sector_cache, learned)
     else:
-        # swing + future use the same analysis
+        # swing use the same analysis
         return _analyze_symbol_swing(symbol, cfg, db_profile, history_df, news_articles, macro_sentiment_score, sector_cache, learned)
 
 
@@ -833,13 +838,13 @@ def _analyze_symbol_swing(
     key_levels = technicals.get_key_levels(history)
 
     # FIX #6 — New composite score formula
-    rsi = metrics.get("rsi") or 50.0
+    rsi = metrics.get("rsi")
+    if rsi is not None and rsi > 75:
+        return {**_zero, "rsi_overbought_blocked": True, "reasoning": "Overbought — RSI > 75"}
 
-    # BUG-01: RSI overbought gate check
+    rsi_val = rsi or 50.0
     overbought_warning = False
-    if rsi > 75:
-        return {**_zero, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
-    elif 70 <= rsi <= 75:
+    if 70 <= rsi_val <= 75:
         overbought_warning = True
 
     macd = metrics.get("macd")
@@ -872,7 +877,7 @@ def _analyze_symbol_swing(
 
     composite = _compute_composite_score(
         regime=regime,
-        rsi=rsi,
+        rsi=rsi_val,
         macd_cross=macd_cross,
         volume_conf=vol_conf,
         sentiment=sentiment_dict,
@@ -1372,13 +1377,13 @@ def _analyze_symbol_longterm(
     key_levels = technicals.get_key_levels(history)
 
     # FIX #6 — New composite score calculation
-    rsi = metrics.get("rsi") or 50.0
+    rsi = metrics.get("rsi")
+    if rsi is not None and rsi > 75:
+        return {**_zero, "rsi_overbought_blocked": True, "reasoning": "Overbought — RSI > 75"}
 
-    # BUG-01: RSI overbought gate check
+    rsi_val = rsi or 50.0
     overbought_warning = False
-    if rsi > 75:
-        return {**_zero, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
-    elif 70 <= rsi <= 75:
+    if 70 <= rsi_val <= 75:
         overbought_warning = True
 
     macd = metrics.get("macd")
@@ -1410,7 +1415,7 @@ def _analyze_symbol_longterm(
 
     composite = _compute_composite_score(
         regime=regime,
-        rsi=rsi,
+        rsi=rsi_val,
         macd_cross=macd_cross,
         volume_conf=vol_conf,
         sentiment=sentiment_dict,

@@ -84,6 +84,7 @@ def reconcile_recommendations() -> dict[str, int]:
                 break
 
         # Check for technical trend reversals to identify if a bullish recommendation turns bearish!
+        reversal_reason = ""
         if outcome == "pending":
             try:
                 mode_lower = (rec.get("trade_mode") or "swing").lower()
@@ -104,9 +105,6 @@ def reconcile_recommendations() -> dict[str, int]:
                             outcome = "bearish_warning"
                             exit_price = price
                             reversal_reason = "MACD Bearish Crossover" if bearish_cross else "Price broke below 9/21 hourly SMAs"
-                            
-                            from app.services.notifier import send_telegram_reversal_alert
-                            send_telegram_reversal_alert(symbol, price, reversal_reason, mode_lower)
                 else:
                     # Swing / longterm / future use daily candles
                     hist_1d = ticker.history(period="30d", interval="1d")
@@ -128,13 +126,11 @@ def reconcile_recommendations() -> dict[str, int]:
                             outcome = "bearish_warning"
                             exit_price = price
                             
-                            reversal_reason = []
-                            if is_macd_bearish: reversal_reason.append("MACD Bearish Crossover")
-                            if is_rsi_bearish: reversal_reason.append("RSI below 45")
-                            if is_sma_bearish: reversal_reason.append("Price below 20-day SMA")
-                            
-                            from app.services.notifier import send_telegram_reversal_alert
-                            send_telegram_reversal_alert(symbol, price, ", ".join(reversal_reason), mode_lower)
+                            reversal_reason_list = []
+                            if is_macd_bearish: reversal_reason_list.append("MACD Bearish Crossover")
+                            if is_rsi_bearish: reversal_reason_list.append("RSI below 45")
+                            if is_sma_bearish: reversal_reason_list.append("Price below 20-day SMA")
+                            reversal_reason = ", ".join(reversal_reason_list)
             except Exception:
                 pass
 
@@ -144,42 +140,70 @@ def reconcile_recommendations() -> dict[str, int]:
                 "exit_price": exit_price,
             }).eq("id", rec["id"]).execute()
 
-            try:
-                from app.services.notifier import send_telegram_profit_alert, send_telegram_exit_alert
-                entry_price = float(rec.get("price") or rec.get("buy_price") or rec.get("entry") or 0.0)
-                if entry_price == 0.0 and target_price:
-                    entry_price = round(target_price / 1.05, 2)
-
-                if outcome == "target_hit":
-                    send_telegram_profit_alert(
-                        symbol=symbol,
-                        target_price=target_price,
-                        entry_price=entry_price,
-                        trade_mode=rec.get("trade_mode") or "Swing"
-                    )
-                elif outcome == "stopped_out":
-                    send_telegram_exit_alert(
-                        symbol=symbol,
-                        stop_loss=stop_loss,
-                        entry_price=entry_price,
-                        trade_mode=rec.get("trade_mode") or "Swing"
-                    )
-            except Exception:
-                pass
+            if outcome == "bearish_warning":
+                return f"bearish_warning:{exit_price}:{reversal_reason}"
             return outcome
         return "pending"
 
     # Parallelize the reconciliation checks using a ThreadPoolExecutor
+    notification_queue = []
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = [pool.submit(reconcile_single, rec) for rec in pending.data]
+        futures = {pool.submit(reconcile_single, rec): rec for rec in pending.data}
         for future in as_completed(futures):
-            res = future.result()
-            if res == "target_hit":
-                target_hits += 1
-            elif res == "stopped_out":
-                stopped_outs += 1
-            elif res == "pending":
-                remain_pending += 1
+            rec = futures[future]
+            try:
+                res = future.result()
+                outcome_type = res.split(":")[0] if ":" in res else res
+                if outcome_type == "target_hit":
+                    target_hits += 1
+                elif outcome_type == "stopped_out":
+                    stopped_outs += 1
+                elif outcome_type == "pending":
+                    remain_pending += 1
+                
+                if outcome_type in ("target_hit", "stopped_out", "bearish_warning"):
+                    notification_queue.append((rec, res))
+            except Exception:
+                pass
+
+    # Fire Telegram notifications in the main thread (outside worker threads / DB transactions)
+    for rec, outcome in notification_queue:
+        symbol = rec.get("symbol")
+        target_price = rec.get("target_price")
+        stop_loss = rec.get("stop_loss")
+        
+        try:
+            entry_price = float(rec.get("price") or rec.get("buy_price") or rec.get("entry") or 0.0)
+            if entry_price == 0.0 and target_price:
+                entry_price = round(float(target_price) / 1.05, 2)
+
+            mode_lower = (rec.get("trade_mode") or "swing").lower()
+
+            if outcome == "target_hit":
+                from app.services.notifier import send_telegram_profit_alert
+                send_telegram_profit_alert(
+                    symbol=symbol,
+                    target_price=float(target_price),
+                    entry_price=entry_price,
+                    trade_mode=rec.get("trade_mode") or "Swing"
+                )
+            elif outcome == "stopped_out":
+                from app.services.notifier import send_telegram_exit_alert
+                send_telegram_exit_alert(
+                    symbol=symbol,
+                    stop_loss=float(stop_loss),
+                    entry_price=entry_price,
+                    trade_mode=rec.get("trade_mode") or "Swing"
+                )
+            elif outcome.startswith("bearish_warning"):
+                parts = outcome.split(":", 2)
+                price = float(parts[1])
+                reversal_reason = parts[2]
+                from app.services.notifier import send_telegram_reversal_alert
+                send_telegram_reversal_alert(symbol, price, reversal_reason, mode_lower)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to send Telegram notification: {exc}")
 
     return {
         "target_hits": target_hits,

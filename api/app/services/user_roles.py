@@ -119,7 +119,9 @@ def get_user_role_profile(user_id: str, email: str | None = None) -> Dict[str, A
         "created_at": datetime.utcnow().isoformat(),
     }
     if is_admin:
-        new_profile["offline_password"] = "DellCompaq@123"
+        import bcrypt
+        admin_pass = os.getenv("ADMIN_PASSWORD", "MarketAdvisorRotated#2026")
+        new_profile["offline_password_hash"] = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
     cache["profiles"][user_id] = new_profile
     _write_json_cache(ROLES_CACHE_FILE, cache)
     return new_profile
@@ -216,8 +218,8 @@ def create_user_admin(email: str, password: str) -> Dict[str, Any]:
         
     profile["id"] = str(uuid.uuid4())
     profile["created_at"] = datetime.utcnow().isoformat()
-    # Save the plaintext password locally in offline mode to support mock logins/impersonations
-    profile["offline_password"] = password
+    import bcrypt
+    profile["offline_password_hash"] = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     cache["profiles"][new_user_id] = profile
     _write_json_cache(ROLES_CACHE_FILE, cache)
     
@@ -263,39 +265,24 @@ def record_admin_trade(
             parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
         return parsed
 
-    # BUG-05: Check duplicates (Open trade of the same symbol in last 10 minutes)
-    if client:
-        try:
-            res = client.table("admin_trades").select("*").eq("symbol", norm_sym).eq("trade_status", "open").execute()
-            if res and res.data:
-                for row in res.data:
-                    created_at_str = row.get("created_at")
-                    if created_at_str:
-                        dt = _parse_utc_datetime(created_at_str)
-                        diff = (now - dt).total_seconds()
-                        if 0 <= diff < 600:
-                            raise ValueError("Duplicate open trade detected")
-        except ValueError as ve:
-            raise ve
-        except Exception as exc:
-            logger.error(f"Supabase duplicate check failed: {exc}")
-
-    # Check local JSON cache for duplicate open trades
-    cache = _read_json_cache(TRADES_CACHE_FILE)
-    trades = list(cache.get("trades", {}).values())
-    for t in trades:
+    # BUG-08: Check duplicates (Open trade of the same symbol in last 10 minutes)
+    existing_trades = get_admin_trades()
+    recent_open = []
+    for t in existing_trades:
         if t.get("symbol") == norm_sym and t.get("trade_status") == "open":
             created_at_str = t.get("created_at")
             if created_at_str:
                 try:
                     dt = _parse_utc_datetime(created_at_str)
-                    diff = (now - dt).total_seconds()
+                    diff = (datetime.utcnow() - dt).total_seconds()
                     if 0 <= diff < 600:
-                        raise ValueError("Duplicate open trade detected")
-                except ValueError as ve:
-                    if str(ve) == "Duplicate open trade detected":
-                        raise ve
+                        recent_open.append(t)
+                except Exception:
                     pass
+    if recent_open:
+        return False  # duplicate within 10 minutes
+
+    cache = _read_json_cache(TRADES_CACHE_FILE)
 
     # BUG-06: Persist SL and target in trade records
     trade_data = {
@@ -388,7 +375,7 @@ def seed_admin_user() -> None:
         return
 
     email = ADMIN_EMAIL
-    password = "DellCompaq@123"
+    password = os.getenv("ADMIN_PASSWORD", "MarketAdvisorRotated#2026")
     
     logger.info(f"Seeding admin user: {email}")
     admin_user_id = None

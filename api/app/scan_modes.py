@@ -39,9 +39,8 @@ class ScanConfig:
     diversified: bool = True
 
     def __post_init__(self):
-        total_weight = self.weight_trend + self.weight_technical + self.weight_news + self.weight_fundamental
-        if abs(total_weight - 1.0) > 0.001:
-            raise ValueError(f"Scoring weights must sum to 1.0. Got {total_weight} for mode {self.mode}")
+        total = self.weight_trend + self.weight_technical + self.weight_news + self.weight_fundamental
+        assert abs(total - 1.0) < 0.001, f"ScanConfig weights must sum to 1.0, got {total:.4f}"
 
 
 INTRADAY = ScanConfig(

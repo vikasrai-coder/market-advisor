@@ -170,7 +170,7 @@ def run_backtest_simulation(
         if not sub_history.empty:
             # For intraday, we simulate hourly candles
             # Otherwise, we look at daily bars
-            candles_to_check = sub_history.head(check_days * 6 if mode == "intraday" else check_days)
+            candles_to_check = sub_history.head(check_days * 7 if mode == "intraday" else check_days)
             
             for idx, row in candles_to_check.iterrows():
                 high = float(row["High"])
@@ -359,9 +359,13 @@ def _fetch_history_up_to(symbol: str, end_date: date, mode: str) -> pd.DataFrame
 def _fetch_subsequent_history(symbol: str, start_date: date, check_days: int, mode: str) -> pd.DataFrame:
     """Fetch historical price data starting after start_date to verify targets/stops."""
     start_str = (start_date + timedelta(days=1)).isoformat()
-    # Fetch double the calendar days to ensure we get enough actual trading days
-    end_str = (start_date + timedelta(days=check_days * 2 + 10)).isoformat()
-    interval = "60m" if mode == "intraday" else "1d"
+    if mode == "intraday":
+        end_str = (start_date + timedelta(days=check_days + 3)).isoformat()
+        interval = "60m"
+    else:
+        # Fetch double the calendar days to ensure we get enough actual trading days
+        end_str = (start_date + timedelta(days=check_days * 2 + 10)).isoformat()
+        interval = "1d"
 
     ticker = yf.Ticker(symbol)
     history = ticker.history(start=start_str, end=end_str, interval=interval, auto_adjust=True)

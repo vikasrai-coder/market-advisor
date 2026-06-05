@@ -118,17 +118,6 @@ def record_alerts(alerts: list[dict[str, Any]]) -> int:
 
         recorded = 0
         for alert in alerts:
-            # BUG-04: Alert Deduplication
-            is_duplicate = any(
-                existing.get("symbol") == alert["symbol"] and
-                existing.get("alert_date") == today and
-                existing.get("entry_price") == alert["entry_price"]
-                for existing in cache.get("alerts_history", [])
-            )
-            if is_duplicate:
-                print(f"[AlphaTracker] Skipping duplicate alert for {alert['symbol']} on {today} at {alert['entry_price']}")
-                continue
-
             # BUG-03: Risk/Reward Gate
             entry_price = alert.get("entry_price")
             target_price = alert.get("target_price")
@@ -168,6 +157,14 @@ def record_alerts(alerts: list[dict[str, Any]]) -> int:
                 "actual_return_pct": None,
                 "reconciled_at": None,
             }
+            already_exists = any(
+                a["symbol"] == entry["symbol"]
+                and a["alert_date"] == entry["alert_date"]
+                and a["entry_price"] == entry["entry_price"]
+                for a in cache["alerts_history"]
+            )
+            if already_exists:
+                continue
             cache["alerts_history"].append(entry)
             recorded += 1
 
@@ -194,6 +191,14 @@ def reconcile_alerts(target_date: str | None = None) -> dict[str, Any]:
             a for a in cache["alerts_history"]
             if a["outcome"] == "pending" and a["alert_date"] == check_date
         ]
+        seen = set()
+        deduped = []
+        for a in pending:
+            key = (a["symbol"], a["entry_price"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(a)
+        pending = deduped
         pending_training = [
             r for r in training_records
             if r["outcome"] == "pending" and r["scan_date"] == check_date
