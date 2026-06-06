@@ -46,7 +46,7 @@ export default function PennyScans() {
               🪙 Penny Swing & Intraday Scans
             </h2>
             <p className="text-xs text-slate-400 mt-1 max-w-xl leading-relaxed">
-              Scan low-ticket equity assets priced strictly **below Rs. 100** on the NSE. Tracks volume anomalies, hourly breakout RSI cycles, and generates targeted daily profit-taking setups.
+              Scan low-ticket equity assets priced strictly **below Rs. 150** on the NSE. Tracks volume anomalies, hourly breakout RSI cycles, and generates targeted daily profit-taking setups.
             </p>
           </div>
 
@@ -109,7 +109,7 @@ export default function PennyScans() {
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-2xl border border-slate-900 bg-slate-950/40 p-12 text-center text-xs text-slate-500">
-          No low-ticket stock listings found under Rs. 100.
+          No low-ticket stock listings found under Rs. 150.
         </div>
       ) : (
         <div className="rounded-3xl border border-slate-800 bg-slate-950/60 backdrop-blur-xl p-6 shadow-2xl relative overflow-hidden">
@@ -183,7 +183,7 @@ export default function PennyScans() {
       {/* 3. Operational Financial Disclaimer */}
       <div className="my-4 p-4 border border-rose-500/20 bg-rose-950/15 text-rose-300 rounded-2xl text-[11px] leading-relaxed shadow-[0_0_15px_rgba(239,68,68,0.05)] border-l-4 border-l-rose-500 select-none">
         <span className="font-extrabold block text-rose-400 uppercase tracking-wider mb-1">⚠️ Admin Strategic Disclaimer</span>
-        All low-ticket scanners operate on standard technical indicators. Scans priced below Rs. 100 are subject to rapid price volatility, order imbalances, and sudden volume gaps. Strictly execute stops and manage risks dynamically. Recommendations are educational and do not constitute absolute guarantees.
+        All low-ticket scanners operate on standard technical indicators. Scans priced below Rs. 150 are subject to rapid price volatility, order imbalances, and sudden volume gaps. Strictly execute stops and manage risks dynamically. Recommendations are educational and do not constitute absolute guarantees.
       </div>
     </div>
   );

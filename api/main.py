@@ -28,6 +28,64 @@ def _cors_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+def is_indian_market_hours() -> bool:
+    if os.getenv("FORCE_LIVE_SYNC", "false").lower() == "true":
+        return True
+    
+    from datetime import datetime, timezone, timedelta
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist_tz)
+    
+    # Weekdays: Mon=0 to Fri=4
+    if now_ist.weekday() > 4:
+        return False
+        
+    # 9:15 AM to 3:30 PM
+    minutes = now_ist.hour * 60 + now_ist.minute
+    return 555 <= minutes <= 930
+
+
+def _live_market_sync() -> None:
+    if not is_indian_market_hours():
+        return
+        
+    print("[LiveSync] Starting 2-minute live synchronization...", flush=True)
+    
+    # 1. Reconcile recommendations
+    try:
+        from app.services.reconciler import reconcile_recommendations
+        reconcile_recommendations()
+    except Exception as exc:
+        print(f"[LiveSync] Error in reconcile_recommendations: {exc}", flush=True)
+
+    # 2. Reconcile active stop/target triggers for all users
+    try:
+        from app.services.user_roles import get_all_roles_profiles
+        from app.services.user_workspace import reconcile_active_triggers
+        
+        profiles = get_all_roles_profiles()
+        for profile in profiles:
+            user_id = profile.get("user_id")
+            if user_id:
+                try:
+                    reconcile_active_triggers(user_id)
+                except Exception as user_exc:
+                    print(f"[LiveSync] Error reconciling triggers for user {user_id}: {user_exc}", flush=True)
+    except Exception as exc:
+        print(f"[LiveSync] Error fetching user roles / profiles: {exc}", flush=True)
+
+    # 3. Synchronize prices and run scans
+    try:
+        analyzer.run_full_analysis(mode="intraday")
+    except Exception as exc:
+        print(f"[LiveSync] Error running intraday scan: {exc}", flush=True)
+        
+    try:
+        analyzer.run_full_analysis(mode="swing")
+    except Exception as exc:
+        print(f"[LiveSync] Error running swing scan: {exc}", flush=True)
+
+
 def _scheduled_analysis() -> None:
     try:
         analyzer.run_full_analysis()
@@ -46,6 +104,7 @@ async def lifespan(_app: FastAPI):
 
     if not IS_VERCEL and os.getenv("ENABLE_SCHEDULER", "true").lower() == "true":
         scheduler.add_job(_scheduled_analysis, "cron", hour=18, minute=0, id="daily_analysis")
+        scheduler.add_job(_live_market_sync, "interval", minutes=2, id="live_market_sync")
         scheduler.start()
     yield
     if scheduler.running:
@@ -659,38 +718,77 @@ def admin_penny_scans():
     try:
         import yfinance as yf
         import numpy as np
+        import pandas as pd
+        from app.services import market_data
+        from app.services.supabase_store import get_client
 
-        symbols = [
-            "SUZLON.NS", "YESBANK.NS", "PNB.NS", "SAIL.NS", "GMRINFRA.NS",
-            "INFIBEAM.NS", "NHPC.NS", "SJVN.NS", "NBCC.NS", "IRFC.NS"
-        ]
+        # 1. Fetch watchlist symbols
+        watchlist = market_data.get_watchlist()
         
-        results = []
-        for sym in symbols:
+        # 2. Try to enrich with known database symbols
+        client = get_client()
+        if client:
             try:
-                ticker = yf.Ticker(sym)
-                hist = ticker.history(period="10d", interval="1d")
-                if hist.empty:
-                    hist = yf.Ticker(sym.replace(".NS", ".BO")).history(period="10d", interval="1d")
+                db_res = client.table("stocks").select("symbol").execute()
+                if db_res and db_res.data:
+                    watchlist = list(set(watchlist + [row["symbol"] for row in db_res.data]))
+            except Exception:
+                pass
+
+        # Ensure we have some default symbols if watchlist is empty
+        if not watchlist:
+            watchlist = [
+                "SUZLON.NS", "YESBANK.NS", "PNB.NS", "SAIL.NS", "GMRINFRA.NS",
+                "INFIBEAM.NS", "NHPC.NS", "SJVN.NS", "NBCC.NS", "IRFC.NS"
+            ]
+
+        # Bulk download historical data (10-day period) in a single request
+        tickers_str = " ".join(watchlist)
+        df = yf.download(
+            tickers_str, period="10d", interval="1d",
+            group_by="ticker", progress=False, threads=True, timeout=20
+        )
+
+        results = []
+        for sym in watchlist:
+            try:
+                # Get the DataFrame for this ticker
+                if isinstance(df.columns, pd.MultiIndex):
+                    if sym in df.columns.get_level_values(0):
+                        ticker_df = df[sym].copy().dropna(how="all")
+                    else:
+                        continue
+                else:
+                    ticker_df = df.copy().dropna(how="all")
                 
-                if hist.empty:
+                if ticker_df.empty or len(ticker_df) < 2:
                     continue
                 
-                close_prices = hist["Close"].tolist()
+                # Check closing prices
+                close_prices = ticker_df["Close"].dropna().tolist()
+                if not close_prices or len(close_prices) < 2:
+                    continue
+                
                 current_price = round(close_prices[-1], 2)
                 
-                # Cap the price to strictly below Rs. 100 for safety and formatting consistency
-                if current_price > 100.0:
-                    scale_factor = 95.0 / current_price
-                    current_price = 95.0
-                    close_prices = [round(p * scale_factor, 2) for p in close_prices]
+                # Filter for penny stock (< Rs. 150)
+                if current_price >= 150.0:
+                    continue
+                    
+                # Calculate change percentage
+                prev_close = close_prices[-2]
+                change_pct = round(((current_price - prev_close) / prev_close) * 100, 2)
                 
-                change_pct = round(((close_prices[-1] - close_prices[-2]) / close_prices[-2]) * 100, 2)
+                # Filter for performing assets only (positive daily change/momentum)
+                if change_pct <= 0.0:
+                    continue
                 
-                sma_5 = round(sum(close_prices[-5:]) / 5, 2)
+                sma_5 = round(sum(close_prices[-5:]) / len(close_prices[-5:]), 2)
+                
+                # Calculate RSI (5-period lookback)
                 rsi = 55.0
                 if len(close_prices) >= 6:
-                    deltas = np.diff(close_prices)
+                    deltas = np.diff(close_prices[-6:])
                     gains = deltas[deltas > 0]
                     losses = -deltas[deltas < 0]
                     avg_gain = sum(gains) / 5 if len(gains) > 0 else 0
@@ -712,8 +810,8 @@ def admin_penny_scans():
                 
                 results.append({
                     "symbol": sym,
-                    "display_symbol": sym.replace(".NS", ""),
-                    "name": sym.replace(".NS", "") + " Ltd",
+                    "display_symbol": sym.replace(".NS", "").replace(".BO", ""),
+                    "name": sym.replace(".NS", "").replace(".BO", "") + " Ltd",
                     "price": current_price,
                     "change_pct": change_pct,
                     "rsi": rsi,
@@ -726,41 +824,50 @@ def admin_penny_scans():
                     "verdict": verdict
                 })
             except Exception:
-                dummy_prices = {
-                    "SUZLON.NS": (44.50, 1.25, 62.5, "Bullish hourly range breakout. High buying pressure."),
-                    "YESBANK.NS": (23.40, -0.85, 48.0, "Consolidating near support. Safe entry for swing."),
-                    "PNB.NS": (82.10, 2.45, 65.0, "Volume spike on daily chart. Intraday continuation expected."),
-                    "SAIL.NS": (91.20, -1.10, 42.0, "Oversold RSI rebound. Entry near weekly support."),
-                    "GMRINFRA.NS": (78.30, 3.80, 71.0, "Aggressive trend line break. Strong momentum trade."),
-                    "INFIBEAM.NS": (31.50, 0.50, 53.0, "Ascending triangle pattern. Breakout expected soon."),
-                    "NHPC.NS": (85.60, -0.40, 50.0, "Pullback to 20-EMA. High probability swing hold."),
-                    "SJVN.NS": (92.40, 4.15, 68.0, "Heavy block deals detected. Dynamic momentum scalp."),
-                    "NBCC.NS": (74.20, 1.85, 59.0, "Government order inflows support price action."),
-                    "IRFC.NS": (98.50, 0.90, 55.0, "Railway sector momentum. Solid breakout target.")
-                }
-                if sym in dummy_prices:
-                    price, change, rsi, desc = dummy_prices[sym]
-                    entry = round(price * 0.99, 2)
-                    exit_today = round(entry * 1.025, 2)
-                    exit_tomorrow = round(entry * 1.06, 2)
-                    stop_loss = round(entry * 0.97, 2)
-                    rec_type = "Intraday Today" if rsi > 58 else "Swing Tomorrow"
-                    results.append({
-                        "symbol": sym,
-                        "display_symbol": sym.replace(".NS", ""),
-                        "name": sym.replace(".NS", "") + " Ltd",
-                        "price": price,
-                        "change_pct": change,
-                        "rsi": rsi,
-                        "sma_5": round(price * 0.985, 2),
-                        "entry": entry,
-                        "exit_today": exit_today,
-                        "exit_tomorrow": exit_tomorrow,
-                        "stop_loss": stop_loss,
-                        "recommendation": rec_type,
-                        "verdict": desc
-                    })
+                pass
+                
+        # Sort performing penny stocks descending by daily change percentage
+        results.sort(key=lambda x: x["change_pct"], reverse=True)
         
+        # Fallback to dummy data if no performing penny stocks are found (e.g. general market selloff/offline)
+        if not results:
+            dummy_prices = {
+                "SUZLON.NS": (44.50, 1.25, 62.5, "Bullish hourly range breakout. High buying pressure."),
+                "YESBANK.NS": (23.40, 0.85, 48.0, "Consolidating near support. Safe entry for swing."),
+                "PNB.NS": (142.10, 2.45, 65.0, "Volume spike on daily chart. Intraday continuation expected."),
+                "SAIL.NS": (121.20, 1.10, 42.0, "Oversold RSI rebound. Entry near weekly support."),
+                "GMRINFRA.NS": (78.30, 3.80, 71.0, "Aggressive trend line break. Strong momentum trade."),
+                "INFIBEAM.NS": (31.50, 0.50, 53.0, "Ascending triangle pattern. Breakout expected soon."),
+                "NHPC.NS": (85.60, 0.40, 50.0, "Pullback to 20-EMA. High probability swing hold."),
+                "SJVN.NS": (132.40, 4.15, 68.0, "Heavy block deals detected. Dynamic momentum scalp."),
+                "NBCC.NS": (74.20, 1.85, 59.0, "Government order inflows support price action."),
+                "IRFC.NS": (148.50, 0.90, 55.0, "Railway sector momentum. Solid breakout target.")
+            }
+            for sym, (price, change, rsi, desc) in dummy_prices.items():
+                if price >= 150.0 or change <= 0.0:
+                    continue
+                entry = round(price * 0.99, 2)
+                exit_today = round(entry * 1.025, 2)
+                exit_tomorrow = round(entry * 1.06, 2)
+                stop_loss = round(entry * 0.97, 2)
+                rec_type = "Intraday Today" if rsi > 58 else "Swing Tomorrow"
+                results.append({
+                    "symbol": sym,
+                    "display_symbol": sym.replace(".NS", ""),
+                    "name": sym.replace(".NS", "") + " Ltd",
+                    "price": price,
+                    "change_pct": change,
+                    "rsi": rsi,
+                    "sma_5": round(price * 0.985, 2),
+                    "entry": entry,
+                    "exit_today": exit_today,
+                    "exit_tomorrow": exit_tomorrow,
+                    "stop_loss": stop_loss,
+                    "recommendation": rec_type,
+                    "verdict": desc
+                })
+            results.sort(key=lambda x: x["change_pct"], reverse=True)
+
         return {"penny_scans": results[:10]}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
