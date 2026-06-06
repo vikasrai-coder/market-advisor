@@ -658,3 +658,87 @@ export async function adminSaveSystemSettings(usageMode: "low" | "high") {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Institutional 8-Pillar Scanner
+// ---------------------------------------------------------------------------
+
+export type InstitutionalPillarScores = {
+  trend: number;
+  momentum: number;
+  volume: number;
+  volatility: number;
+  market_structure: number;
+  relative_strength: number;
+  institutional: number;
+  news_sentiment: number;
+};
+
+export type InstitutionalResult = {
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  sector: string;
+  cap_segment: string;
+  price: number;
+  alpha_score: number;
+  confidence_score: number;
+  verdict: "BUY" | "HOLD" | "SELL";
+  entry: number;
+  stop_loss: number;
+  target_1: number;
+  target_2: number;
+  risk_reward: number;
+  pillar_scores: InstitutionalPillarScores;
+  pillar_details: Record<string, unknown>;
+  reasoning: string;
+  generated_at: string;
+};
+
+export type InstitutionalScanResponse = {
+  status: string;
+  message: string;
+  results?: InstitutionalResult[];
+  alerts?: InstitutionalResult[];
+  summary?: {
+    scanned: number;
+    total_results: number;
+    high_alpha_alerts: number;
+    market_environment: string;
+    generated_at: string;
+  };
+  job_id?: string;
+};
+
+export type InstitutionalScanJob = {
+  job_id: string;
+  status: "running" | "completed" | "failed";
+  progress?: number;
+  message?: string;
+  result?: InstitutionalScanResponse;
+  error?: string;
+};
+
+export async function runInstitutionalScan(refresh = false) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 600000);
+  try {
+    const q = refresh ? "?refresh=true" : "";
+    return await fetchJson<InstitutionalScanResponse>(`/api/institutional/scan${q}`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getInstitutionalScanStatus(jobId: string) {
+  return fetchJson<InstitutionalScanJob>(`/api/institutional/scan/status/${jobId}`);
+}
+
+export async function scoreInstitutionalStock(symbol: string) {
+  return fetchJson<InstitutionalResult & { status: string }>("/api/institutional/score", {
+    method: "POST",
+    body: JSON.stringify({ symbol }),
+  });
+}

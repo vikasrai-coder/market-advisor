@@ -167,6 +167,70 @@ def check_position_health(
     except Exception:
         current_pnl_pct = 0.0
 
+    # 7. Supertrend reversal — trend structure broken (institutional exit trigger)
+    try:
+        from app.services.technicals import compute_supertrend, compute_ema_alignment
+        st = compute_supertrend(df)
+        if st.get("trend") == "bearish" and st.get("flipped"):
+            ema = compute_ema_alignment(close)
+            if ema.get("ema20") and current_price < ema["ema20"]:
+                warnings.append({
+                    "signal": "supertrend_reversal",
+                    "severity": "high",
+                    "message": (
+                        f"Supertrend FLIPPED bearish at ₹{st['supertrend_value']:.2f} "
+                        f"+ price below EMA20 (₹{ema['ema20']:.2f}) — trend structure broken"
+                    ),
+                })
+                # Fire Telegram alert
+                try:
+                    from app.services.notifier import send_trend_reversal_exit_alert
+                    send_trend_reversal_exit_alert(symbol, current_price, {
+                        "supertrend_value": st["supertrend_value"],
+                        "ema20": ema["ema20"],
+                    })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 8. Momentum collapse — all oscillators bearish simultaneously
+    try:
+        from app.services.technicals import compute_stochastic_rsi
+        rsi_series = compute_rsi(close, 14)
+        current_rsi = float(rsi_series.iloc[-1]) if len(rsi_series) > 0 else 50
+        stoch = compute_stochastic_rsi(close)
+        stoch_k = stoch.get("stoch_k", 50)
+
+        # MACD histogram
+        macd_line = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+        macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+        macd_hist = float(macd_line.iloc[-1] - macd_signal.iloc[-1])
+        prev_macd_hist = float(macd_line.iloc[-2] - macd_signal.iloc[-2]) if len(macd_line) > 1 else macd_hist
+
+        if current_rsi < 40 and stoch_k < 20 and macd_hist < prev_macd_hist and macd_hist < 0:
+            warnings.append({
+                "signal": "momentum_collapse",
+                "severity": "high",
+                "message": (
+                    f"MOMENTUM COLLAPSE — RSI {current_rsi:.1f}, "
+                    f"Stoch RSI %K {stoch_k:.1f}, MACD histogram declining. "
+                    f"All oscillators bearish simultaneously."
+                ),
+            })
+            # Fire Telegram alert
+            try:
+                from app.services.notifier import send_momentum_collapse_alert
+                send_momentum_collapse_alert(symbol, current_price, {
+                    "rsi": current_rsi,
+                    "stoch_k": stoch_k,
+                    "macd_histogram": macd_hist,
+                })
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # --- Classification ---
     high_warnings = [w for w in warnings if w["severity"] == "high"]
 

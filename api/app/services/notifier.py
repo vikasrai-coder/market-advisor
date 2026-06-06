@@ -233,3 +233,125 @@ def send_telegram_reversal_alert(symbol: str, price: float, reason: str, trade_m
     message += f"⚠️ Action Note: The technical trend has reversed to BEARISH. Consider booking profits or exiting position early to manage risks and preserve capital! 🛡️"
 
     return _send_telegram_msg(message)
+
+
+def send_institutional_alpha_alert(analysis: dict) -> bool:
+    """Fire an institutional-grade alpha alert — only for highest-conviction setups.
+
+    Gate: Alpha > 80, Confidence > 75, R:R > 1:2.
+    """
+    alpha = analysis.get("alpha_score", 0)
+    confidence = analysis.get("confidence_score", 0)
+    rr = analysis.get("risk_reward", 0)
+
+    # Hard gate — do not send unless all thresholds met
+    if alpha <= 80 or confidence <= 75 or rr <= 2.0:
+        return False
+
+    sym = analysis.get("display_symbol", "").upper()
+    name = analysis.get("name", sym)
+    verdict = analysis.get("verdict", "BUY")
+    entry = analysis.get("entry", 0)
+    sl = analysis.get("stop_loss", 0)
+    t1 = analysis.get("target_1", 0)
+    t2 = analysis.get("target_2", 0)
+    sector = analysis.get("sector", "N/A")
+    reasoning = analysis.get("reasoning", "")
+
+    pillar_scores = analysis.get("pillar_scores", {})
+
+    # Build pillar summary
+    pillar_lines = []
+    pillar_labels = {
+        "trend": "📈 Trend",
+        "momentum": "⚡ Momentum",
+        "volume": "📊 Volume",
+        "volatility": "🌊 Volatility",
+        "market_structure": "🏗️ Structure",
+        "relative_strength": "💪 Rel. Strength",
+        "institutional": "🏦 Institutional",
+        "news_sentiment": "📰 News",
+    }
+    for key, label in pillar_labels.items():
+        s = pillar_scores.get(key, 50)
+        bar = "█" * int(s / 10) + "░" * (10 - int(s / 10))
+        pillar_lines.append(f"  {label}: `{bar}` *{s:.0f}*")
+
+    groww_link = _get_groww_link(symbol=analysis.get("symbol", ""))
+
+    message = f"🔥 *INSTITUTIONAL ALPHA ALERT* 🔥\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"🏛️ *{sym}* — {name}\n"
+    message += f"📊 Sector: *{sector}*\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += f"🎯 Alpha Score: *{alpha:.0f}/100*\n"
+    message += f"🔒 Confidence: *{confidence:.0f}%*\n"
+    message += f"✅ Verdict: *{verdict}*\n\n"
+    message += f"📋 *8-PILLAR BREAKDOWN:*\n"
+    message += "\n".join(pillar_lines)
+    message += f"\n\n"
+    message += f"💰 *TRADE PLAN:*\n"
+    message += f"  Entry: `₹{entry:.2f}`\n"
+    message += f"  Stop Loss: `₹{sl:.2f}`\n"
+    message += f"  Target 1: `₹{t1:.2f}`\n"
+    message += f"  Target 2: `₹{t2:.2f}`\n"
+    message += f"  Risk:Reward: `1:{rr:.1f}`\n\n"
+    message += f"💡 _{reasoning[:300]}_\n\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"💼 [Trade on Groww]({groww_link})"
+
+    return _send_telegram_msg(message)
+
+
+def send_momentum_collapse_alert(symbol: str, price: float, data: dict) -> bool:
+    """Alert when momentum collapses across all oscillators simultaneously.
+
+    Fires when: RSI < 40 + MACD histogram declining + Stoch RSI < 20.
+    """
+    sym = symbol.replace(".NS", "").replace(".BO", "").upper()
+    groww_link = _get_groww_link(symbol=symbol)
+
+    rsi = data.get("rsi", 0)
+    stoch_k = data.get("stoch_k", 50)
+    macd_hist = data.get("macd_histogram", 0)
+
+    message = f"🚨 *MOMENTUM COLLAPSE DETECTED* 🚨\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"📉 Ticker: *{sym}*\n"
+    message += f"💵 Current Price: *₹{price:.2f}*\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"⚡ RSI: *{rsi:.1f}* (below 40)\n"
+    message += f"📊 Stoch RSI %K: *{stoch_k:.1f}* (below 20)\n"
+    message += f"📉 MACD Histogram: *{macd_hist:.4f}* (declining)\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"⚠️ *All momentum indicators have collapsed simultaneously.*\n"
+    message += f"🛡️ ACTION: Exit all open positions in {sym} immediately to preserve capital.\n\n"
+    message += f"💼 View on Groww: {groww_link}"
+
+    return _send_telegram_msg(message)
+
+
+def send_trend_reversal_exit_alert(symbol: str, price: float, data: dict) -> bool:
+    """Alert when Supertrend flips bearish + price below EMA20.
+
+    This is a stronger exit signal than the basic reversal alert.
+    """
+    sym = symbol.replace(".NS", "").replace(".BO", "").upper()
+    groww_link = _get_groww_link(symbol=symbol)
+
+    supertrend_val = data.get("supertrend_value", 0)
+    ema20 = data.get("ema20", 0)
+
+    message = f"🔴 *CONFIRMED TREND REVERSAL — EXIT* 🔴\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"📉 Ticker: *{sym}*\n"
+    message += f"💵 Current Price: *₹{price:.2f}*\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"🔻 Supertrend: FLIPPED BEARISH at *₹{supertrend_val:.2f}*\n"
+    message += f"🔻 Price below EMA20: *₹{ema20:.2f}*\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"⚠️ *Dual confirmation: Supertrend bearish flip + EMA20 breakdown.*\n"
+    message += f"🛡️ ACTION: Close position to protect capital. Trend structure is broken.\n\n"
+    message += f"💼 View on Groww: {groww_link}"
+
+    return _send_telegram_msg(message)

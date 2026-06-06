@@ -1174,6 +1174,113 @@ def run_reconcile():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+# ---------------------------------------------------------------------------
+# Institutional 8-Pillar Scanner
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/institutional/scan")
+def institutional_scan(refresh: bool = False):
+    """Run the 8-pillar institutional scanner across all watchlist stocks.
+
+    Returns cached scan results if fresh (within 30 mins) and refresh is False.
+    Otherwise, starts a background job and returns the job ID.
+    """
+    try:
+        from app.services.institutional_scorer import get_cached_institutional_scan
+        from app import institutional_jobs
+        
+        # 1. If not forcing refresh, try loading from cache first
+        if not refresh:
+            cached_result = get_cached_institutional_scan()
+            if cached_result:
+                # Cache hit!
+                return {
+                    "status": "success",
+                    "message": f"Institutional scan loaded from cache — {cached_result['summary']['total_results']} stocks scored.",
+                    **cached_result,
+                }
+
+        # 2. Cache miss or refresh requested -> trigger background job
+        running_job = institutional_jobs.get_running_job()
+        if running_job:
+            return {
+                "status": "running",
+                "job_id": running_job["job_id"],
+                "message": "Institutional scan is already running.",
+            }
+
+        job_id = institutional_jobs.start_job()
+        return {
+            "status": "running",
+            "job_id": job_id,
+            "message": "Institutional scan started in the background. Poll /api/institutional/scan/status/{job_id} for progress.",
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/institutional/scan/status/{job_id}")
+def institutional_scan_status(job_id: str):
+    """Retrieve the status and results of a background institutional scan job."""
+    from app import institutional_jobs
+    job = institutional_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+class InstitutionalSingleRequest(BaseModel):
+    symbol: str
+
+
+@app.post("/api/institutional/score")
+def institutional_score_single(req: InstitutionalSingleRequest):
+    """Score a single stock using the 8-pillar institutional analyzer."""
+    try:
+        import yfinance as yf
+        import pandas as pd
+        from app.services.institutional_scorer import score_stock
+        from app.services.sector_rs import get_today_market_context, _normalize_sector
+
+        symbol = normalize_symbol(req.symbol)
+        df = yf.download(symbol, period="1y", interval="1d", progress=False)
+        if df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+
+        # Fetch profile from DB
+        profile = None
+        client = get_client()
+        if client:
+            try:
+                res = client.table("stocks").select("*").eq("symbol", symbol).execute()
+                if res.data:
+                    profile = res.data[0]
+            except Exception:
+                pass
+        if not profile:
+            profile = {"symbol": symbol, "name": symbol.replace(".NS", "")}
+
+        # Sector RS
+        sector_rs = None
+        try:
+            market_ctx = get_today_market_context()
+            sector = profile.get("sector")
+            if sector:
+                normalized = _normalize_sector(sector)
+                if normalized and normalized in market_ctx.get("sectors", {}):
+                    sector_rs = market_ctx["sectors"][normalized]
+        except Exception:
+            pass
+
+        result = score_stock(symbol, df, profile, sector_rs)
+        return {"status": "success", **result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/recommendations")
 def list_recommendations(trade_date: str | None = None, mode: str | None = None):
     # Try getting from Redis cache

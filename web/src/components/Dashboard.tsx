@@ -21,6 +21,7 @@ import AdminDashboard from "./AdminDashboard";
 import ChatbotAdvisor from "./ChatbotAdvisor";
 import PennyScans from "./PennyScans";
 import AlphaAlerts from "./AlphaAlerts";
+import InstitutionalScanner from "./InstitutionalScanner";
 import { KPIDashboard } from "./KPIDashboard";
 import { ModuleNavigation } from "./ModuleNavigation";
 import { createClient } from "@/lib/supabase/client";
@@ -37,7 +38,7 @@ type PermissionSet = {
 };
 
 type SessionUser = { id: string; email: string; role: string };
-type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha" | "mindmap";
+type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha" | "institutional" | "mindmap";
 
 const DEFAULT_PERMISSIONS: PermissionSet = {
   can_view_charts: false,
@@ -99,7 +100,7 @@ export function Dashboard() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as DashboardTab;
-      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "admin", "mindmap"].includes(tab)) {
+      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "institutional", "admin", "mindmap"].includes(tab)) {
         setActiveTab(tab);
       }
 
@@ -325,6 +326,8 @@ export function Dashboard() {
             title="System Architecture Mind Map"
           />
         </div>
+      ) : activeTab === "institutional" ? (
+        <InstitutionalScanner />
       ) : activeTab === "scans" ? (
         permissions.can_view_recommendations === false ? (
           <LockedPanel title="Scanner Recommendations Locked" detail="Admin access rules hide recommendations for this profile." />

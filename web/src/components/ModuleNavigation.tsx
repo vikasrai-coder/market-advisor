@@ -22,6 +22,7 @@ type ModuleTab =
   | "chatbot"
   | "pennyscans"
   | "alpha"
+  | "institutional"
   | "mindmap"
   | "admin";
 
@@ -43,6 +44,7 @@ export function ModuleNavigation({
     { id: "portfolio", label: "PORTFOLIO", icon: <FolderOutlined /> },
     { id: "chatbot", label: "AI ADVISOR", icon: <RobotOutlined /> },
     { id: "pennyscans", label: "PENNY SCANS", icon: <LineChartOutlined /> },
+    { id: "institutional", label: "🏛️ INST.", icon: <BarChartOutlined /> },
   ];
 
   if (isAdminMode) {

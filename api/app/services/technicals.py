@@ -330,19 +330,20 @@ def get_volume_confirmation(df: pd.DataFrame, lookback: int = 20) -> dict:
         return {"volume_ratio": 0.0, "confirmed": False, "strong": False}
 
     volume = df["Volume"].astype(float)
-    avg_volume = volume.rolling(lookback).mean().iloc[-1]
+    avg_volume = float(volume.rolling(lookback).mean().iloc[-1])
     current_volume = float(volume.iloc[-1])
 
     if pd.isna(avg_volume) or avg_volume <= 0:
         return {"volume_ratio": 0.0, "confirmed": False, "strong": False}
 
-    volume_ratio = round(current_volume / avg_volume, 2)
+    volume_ratio = float(round(current_volume / avg_volume, 2))
 
     return {
         "volume_ratio": volume_ratio,
-        "confirmed": volume_ratio >= 1.5,
-        "strong": volume_ratio >= 2.5,
+        "confirmed": bool(volume_ratio >= 1.5),
+        "strong": bool(volume_ratio >= 2.5),
     }
+
 
 
 def get_vwap(df: pd.DataFrame) -> float | None:
@@ -582,24 +583,29 @@ def get_key_levels(df: pd.DataFrame, lookback: int = 60) -> dict:
         close = df["Close"].astype(float).tail(lookback)
         high = df["High"].astype(float).tail(lookback)
         low = df["Low"].astype(float).tail(lookback)
-        current_price = float(close.iloc[-1])
+        close_arr = close.to_numpy()
+        high_arr = high.to_numpy()
+        low_arr = low.to_numpy()
+        current_price = float(close_arr[-1])
+
 
         swing_highs: list[float] = []
         swing_lows: list[float] = []
 
-        for i in range(2, len(close) - 2):
-            # Swing high: candle high > both neighbours on each side
-            if (float(high.iloc[i]) > float(high.iloc[i - 1])
-                    and float(high.iloc[i]) > float(high.iloc[i + 1])
-                    and float(high.iloc[i]) > float(high.iloc[i - 2])
-                    and float(high.iloc[i]) > float(high.iloc[i + 2])):
-                swing_highs.append(float(high.iloc[i]))
-            # Swing low: candle low < both neighbours on each side
-            if (float(low.iloc[i]) < float(low.iloc[i - 1])
-                    and float(low.iloc[i]) < float(low.iloc[i + 1])
-                    and float(low.iloc[i]) < float(low.iloc[i - 2])
-                    and float(low.iloc[i]) < float(low.iloc[i + 2])):
-                swing_lows.append(float(low.iloc[i]))
+        for i in range(2, len(close_arr) - 2):
+            val_high = float(high_arr[i])
+            if (val_high > float(high_arr[i - 1])
+                    and val_high > float(high_arr[i + 1])
+                    and val_high > float(high_arr[i - 2])
+                    and val_high > float(high_arr[i + 2])):
+                swing_highs.append(val_high)
+            val_low = float(low_arr[i])
+            if (val_low < float(low_arr[i - 1])
+                    and val_low < float(low_arr[i + 1])
+                    and val_low < float(low_arr[i - 2])
+                    and val_low < float(low_arr[i + 2])):
+                swing_lows.append(val_low)
+
 
         supports_below = sorted([s for s in swing_lows if s < current_price], reverse=True)
         resistances_above = sorted([r for r in swing_highs if r > current_price])
@@ -1098,4 +1104,500 @@ def get_stock_personality(stock_profile: dict, df: pd.DataFrame) -> dict:
         "avg_daily_value_cr": round(avg_daily_value_cr, 2),
         "annualised_vol_pct": round(annualised_vol, 2),
         "rules": rules
+    }
+
+
+# ---------------------------------------------------------------------------
+# Institutional-Grade Indicators — Phase 1
+# ---------------------------------------------------------------------------
+
+
+def compute_ema_alignment(close: pd.Series) -> dict:
+    """Compute EMA20/50/200 alignment and trend strength.
+
+    Returns:
+        ema20, ema50, ema200: latest values
+        alignment: "bullish" | "bearish" | "mixed"
+        price_vs_ema: above/below each EMA
+        trend_strength: 0-100 score based on alignment quality
+    """
+    result = {
+        "ema20": None, "ema50": None, "ema200": None,
+        "alignment": "mixed", "price_vs_ema": {},
+        "trend_strength": 50.0,
+    }
+    if len(close) < 20:
+        return result
+
+    ema20 = float(close.ewm(span=20, adjust=False).mean().iloc[-1])
+    result["ema20"] = round(ema20, 2)
+
+    price = float(close.iloc[-1])
+    result["price_vs_ema"]["ema20"] = price > ema20
+
+    if len(close) >= 50:
+        ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+        result["ema50"] = round(ema50, 2)
+        result["price_vs_ema"]["ema50"] = price > ema50
+
+    if len(close) >= 200:
+        ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
+        result["ema200"] = round(ema200, 2)
+        result["price_vs_ema"]["ema200"] = price > ema200
+
+    e20 = result["ema20"]
+    e50 = result["ema50"]
+    e200 = result["ema200"]
+
+    # Alignment classification
+    if e20 and e50 and e200:
+        if price > e20 > e50 > e200:
+            result["alignment"] = "bullish"
+            result["trend_strength"] = 90.0
+        elif price < e20 < e50 < e200:
+            result["alignment"] = "bearish"
+            result["trend_strength"] = 10.0
+        elif price > e20 and e20 > e50:
+            result["alignment"] = "bullish"
+            result["trend_strength"] = 75.0
+        elif price < e20 and e20 < e50:
+            result["alignment"] = "bearish"
+            result["trend_strength"] = 25.0
+        else:
+            result["alignment"] = "mixed"
+            result["trend_strength"] = 50.0
+    elif e20 and e50:
+        if price > e20 > e50:
+            result["alignment"] = "bullish"
+            result["trend_strength"] = 70.0
+        elif price < e20 < e50:
+            result["alignment"] = "bearish"
+            result["trend_strength"] = 30.0
+        else:
+            result["alignment"] = "mixed"
+            result["trend_strength"] = 50.0
+    elif e20:
+        result["alignment"] = "bullish" if price > e20 else "bearish"
+        result["trend_strength"] = 60.0 if price > e20 else 40.0
+
+    return result
+
+
+def compute_supertrend(
+    df: pd.DataFrame,
+    period: int = 10,
+    multiplier: float = 3.0,
+) -> dict:
+    """Compute the Supertrend indicator — ATR-based dynamic trailing stop.
+
+    Logic:
+        Upper Band = HL2 + (multiplier × ATR)
+        Lower Band = HL2 - (multiplier × ATR)
+        When price closes above upper band → bullish flip
+        When price closes below lower band → bearish flip
+
+    Returns:
+        trend: "bullish" | "bearish"
+        supertrend_value: the trailing stop level
+        flipped: True if trend changed on the latest candle
+    """
+    if df.empty or len(df) < period + 1:
+        return {"trend": "neutral", "supertrend_value": None, "flipped": False}
+
+    high = df["High"].astype(float) if "High" in df.columns else df["Close"].astype(float)
+    low = df["Low"].astype(float) if "Low" in df.columns else df["Close"].astype(float)
+    close = df["Close"].astype(float)
+
+    hl2 = (high + low) / 2
+
+    # True Range → ATR
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+
+    upper_band = hl2 + (multiplier * atr)
+    lower_band = hl2 - (multiplier * atr)
+
+    # Iterative Supertrend computation using fast NumPy array operations
+    upper_band_arr = upper_band.to_numpy().copy()
+    lower_band_arr = lower_band.to_numpy().copy()
+    close_arr = close.to_numpy()
+
+    supertrend_arr = np.zeros(len(close))
+    direction_arr = np.ones(len(close), dtype=int)  # 1 = bullish, -1 = bearish
+
+    for i in range(period, len(close_arr)):
+        if np.isnan(upper_band_arr[i]) or np.isnan(lower_band_arr[i]):
+            if i > 0:
+                supertrend_arr[i] = supertrend_arr[i - 1]
+                direction_arr[i] = direction_arr[i - 1]
+            continue
+
+        # Carry forward bands with Supertrend rules
+        if i > period:
+            # Lower band ratchet: never decrease
+            if lower_band_arr[i] < lower_band_arr[i - 1] and close_arr[i - 1] > lower_band_arr[i - 1]:
+                lower_band_arr[i] = lower_band_arr[i - 1]
+            # Upper band ratchet: never increase
+            if upper_band_arr[i] > upper_band_arr[i - 1] and close_arr[i - 1] < upper_band_arr[i - 1]:
+                upper_band_arr[i] = upper_band_arr[i - 1]
+
+        prev_dir = direction_arr[i - 1] if i > period else 1
+
+        if prev_dir == 1:  # was bullish
+            if close_arr[i] < lower_band_arr[i]:
+                direction_arr[i] = -1
+                supertrend_arr[i] = upper_band_arr[i]
+            else:
+                direction_arr[i] = 1
+                supertrend_arr[i] = lower_band_arr[i]
+        else:  # was bearish
+            if close_arr[i] > upper_band_arr[i]:
+                direction_arr[i] = 1
+                supertrend_arr[i] = lower_band_arr[i]
+            else:
+                direction_arr[i] = -1
+                supertrend_arr[i] = upper_band_arr[i]
+
+    curr_dir = int(direction_arr[-1])
+    prev_dir_val = int(direction_arr[-2]) if len(direction_arr) > 1 else curr_dir
+    trend = "bullish" if curr_dir == 1 else "bearish"
+    flipped = curr_dir != prev_dir_val
+
+
+    return {
+        "trend": trend,
+        "supertrend_value": round(float(supertrend_arr[-1]), 2),
+        "flipped": flipped,
+    }
+
+
+
+def compute_stochastic_rsi(
+    close: pd.Series,
+    rsi_period: int = 14,
+    stoch_period: int = 14,
+    smooth_k: int = 3,
+    smooth_d: int = 3,
+) -> dict:
+    """Stochastic RSI — RSI of RSI, mapped to 0-100.
+
+    Oversold: < 20  |  Overbought: > 80
+    Bullish cross: %K crosses above %D when both < 30
+    Bearish cross: %K crosses below %D when both > 70
+
+    Returns:
+        stoch_k: smoothed %K (0-100)
+        stoch_d: smoothed %D (0-100)
+        zone: "oversold" | "overbought" | "neutral"
+        bullish_cross: bool
+        bearish_cross: bool
+    """
+    default = {"stoch_k": 50.0, "stoch_d": 50.0, "zone": "neutral",
+               "bullish_cross": False, "bearish_cross": False}
+    if len(close) < rsi_period + stoch_period + smooth_k:
+        return default
+
+    # Full RSI series
+    rsi_series = compute_rsi(close, rsi_period)
+
+    # Stochastic of RSI
+    rsi_min = rsi_series.rolling(stoch_period).min()
+    rsi_max = rsi_series.rolling(stoch_period).max()
+    rsi_range = (rsi_max - rsi_min).replace(0, float("nan"))
+    stoch_rsi = ((rsi_series - rsi_min) / rsi_range) * 100
+
+    k = stoch_rsi.rolling(smooth_k).mean()
+    d = k.rolling(smooth_d).mean()
+
+    if k.isna().iloc[-1] or d.isna().iloc[-1]:
+        return default
+
+    curr_k = float(k.iloc[-1])
+    curr_d = float(d.iloc[-1])
+    prev_k = float(k.iloc[-2]) if len(k) > 1 and not pd.isna(k.iloc[-2]) else curr_k
+    prev_d = float(d.iloc[-2]) if len(d) > 1 and not pd.isna(d.iloc[-2]) else curr_d
+
+    zone = "neutral"
+    if curr_k < 20 and curr_d < 20:
+        zone = "oversold"
+    elif curr_k > 80 and curr_d > 80:
+        zone = "overbought"
+
+    bullish_cross = prev_k <= prev_d and curr_k > curr_d and curr_k < 30
+    bearish_cross = prev_k >= prev_d and curr_k < curr_d and curr_k > 70
+
+    return {
+        "stoch_k": round(curr_k, 2),
+        "stoch_d": round(curr_d, 2),
+        "zone": zone,
+        "bullish_cross": bullish_cross,
+        "bearish_cross": bearish_cross,
+    }
+
+
+def compute_bollinger_bands(
+    close: pd.Series,
+    period: int = 20,
+    num_std: float = 2.0,
+) -> dict:
+    """Bollinger Bands with bandwidth and %B.
+
+    Squeeze detection: bandwidth < 50th percentile of last 120 periods → low volatility.
+    %B: 0 = at lower band, 1 = at upper band, > 1 = above upper (overbought).
+
+    Returns:
+        upper, middle, lower: band values
+        bandwidth: (upper - lower) / middle × 100
+        percent_b: (price - lower) / (upper - lower)
+        squeeze: True if bandwidth in bottom 25th percentile
+        zone: "above_upper" | "below_lower" | "normal"
+    """
+    default = {
+        "upper": None, "middle": None, "lower": None,
+        "bandwidth": None, "percent_b": None, "squeeze": False, "zone": "normal",
+    }
+    if len(close) < period:
+        return default
+
+    middle = close.rolling(period).mean()
+    std = close.rolling(period).std()
+    upper = middle + (num_std * std)
+    lower = middle - (num_std * std)
+
+    curr_upper = float(upper.iloc[-1])
+    curr_middle = float(middle.iloc[-1])
+    curr_lower = float(lower.iloc[-1])
+    price = float(close.iloc[-1])
+
+    if pd.isna(curr_upper) or curr_middle == 0:
+        return default
+
+    bandwidth = ((curr_upper - curr_lower) / curr_middle) * 100
+    band_range = curr_upper - curr_lower
+    percent_b = (price - curr_lower) / band_range if band_range > 0 else 0.5
+
+    # Squeeze detection: bandwidth in bottom 25th percentile of recent history
+    bw_series = ((upper - lower) / middle) * 100
+    bw_clean = bw_series.dropna()
+    lookback = min(120, len(bw_clean))
+    squeeze = False
+    if lookback >= 20:
+        percentile_25 = float(bw_clean.tail(lookback).quantile(0.25))
+        squeeze = bandwidth <= percentile_25
+
+    zone = "normal"
+    if price > curr_upper:
+        zone = "above_upper"
+    elif price < curr_lower:
+        zone = "below_lower"
+
+    return {
+        "upper": round(curr_upper, 2),
+        "middle": round(curr_middle, 2),
+        "lower": round(curr_lower, 2),
+        "bandwidth": round(bandwidth, 2),
+        "percent_b": round(percent_b, 4),
+        "squeeze": squeeze,
+        "zone": zone,
+    }
+
+
+def detect_breakout_breakdown(df: pd.DataFrame, lookback: int = 60) -> dict:
+    """Detect if price is breaking out above resistance or breaking down below support.
+
+    Uses the existing get_key_levels function and checks:
+      - Breakout: close > nearest resistance on above-average volume
+      - Breakdown: close < nearest support on above-average volume
+      - Retest: price came back to test a broken level
+
+    Returns:
+        status: "breakout" | "breakdown" | "retest_support" | "retest_resistance" | "range_bound"
+        level: the S/R level being interacted with
+        volume_confirmed: True if volume backs the move
+        score: 0-100 strength of the signal
+    """
+    default = {"status": "range_bound", "level": None,
+               "volume_confirmed": False, "score": 50}
+    if df.empty or "Close" not in df.columns:
+        return default
+
+    levels = get_key_levels(df, lookback)
+    close = df["Close"].astype(float)
+    price = float(close.iloc[-1])
+    prev_price = float(close.iloc[-2]) if len(close) > 1 else price
+
+    volume = df["Volume"].astype(float) if "Volume" in df.columns else None
+    vol_confirmed = False
+    if volume is not None and len(volume) >= 20:
+        avg_vol = float(volume.rolling(20).mean().iloc[-1])
+        curr_vol = float(volume.iloc[-1])
+        vol_confirmed = avg_vol > 0 and curr_vol > avg_vol * 1.3
+
+    resistance = levels.get("nearest_resistance")
+    support = levels.get("nearest_support")
+
+    # Breakout: price crossed above resistance
+    if resistance and price > resistance and prev_price <= resistance:
+        score = 80 if vol_confirmed else 55
+        return {"status": "breakout", "level": resistance,
+                "volume_confirmed": vol_confirmed, "score": score}
+
+    # Breakdown: price crossed below support
+    if support and price < support and prev_price >= support:
+        score = 80 if vol_confirmed else 55
+        return {"status": "breakdown", "level": support,
+                "volume_confirmed": vol_confirmed, "score": score}
+
+    # Retest: price came back to a previously broken level
+    if resistance and abs(price - resistance) / resistance < 0.005:
+        return {"status": "retest_resistance", "level": resistance,
+                "volume_confirmed": vol_confirmed, "score": 40}
+    if support and abs(price - support) / support < 0.005:
+        return {"status": "retest_support", "level": support,
+                "volume_confirmed": vol_confirmed, "score": 60}
+
+    # Near breakout: within 1% of resistance
+    if resistance and 0 < (resistance - price) / price < 0.01:
+        return {"status": "near_breakout", "level": resistance,
+                "volume_confirmed": vol_confirmed, "score": 65}
+
+    return default
+
+
+def compute_stock_rs_vs_nifty(
+    stock_close: pd.Series,
+    nifty_close: pd.Series | None = None,
+    period_days: int = 20,
+) -> dict:
+    """Compute individual stock's relative strength vs Nifty 50.
+
+    If nifty_close is not provided, fetches it via yfinance.
+    RS > 1.05 → stock outperforming market (bullish)
+    RS < 0.95 → stock underperforming market (bearish)
+
+    Returns:
+        rs_score: float ratio
+        status: "outperforming" | "neutral" | "underperforming"
+        stock_return_pct: stock return over period
+        nifty_return_pct: nifty return over period
+    """
+    default = {"rs_score": 1.0, "status": "neutral",
+               "stock_return_pct": 0.0, "nifty_return_pct": 0.0}
+
+    if len(stock_close) < 5:
+        return default
+
+    if nifty_close is None or nifty_close.empty:
+        return default
+
+
+    if len(nifty_close) < 2:
+        return default
+
+    # Use last `period_days` trading days available
+    stock_tail = stock_close.tail(period_days)
+    nifty_tail = nifty_close.tail(period_days)
+
+    if len(stock_tail) < 2 or len(nifty_tail) < 2:
+        return default
+
+    stock_return = (float(stock_tail.iloc[-1]) / float(stock_tail.iloc[0])) - 1
+    nifty_return = (float(nifty_tail.iloc[-1]) / float(nifty_tail.iloc[0])) - 1
+
+    denom = 1 + nifty_return
+    rs = (1 + stock_return) / denom if denom != 0 else 1.0
+
+    if rs > 1.05:
+        status = "outperforming"
+    elif rs < 0.95:
+        status = "underperforming"
+    else:
+        status = "neutral"
+
+    return {
+        "rs_score": round(rs, 4),
+        "status": status,
+        "stock_return_pct": round(stock_return * 100, 2),
+        "nifty_return_pct": round(nifty_return * 100, 2),
+    }
+
+
+def compute_delivery_volume_proxy(df: pd.DataFrame) -> dict:
+    """Estimate delivery volume ratio as a proxy for institutional participation.
+
+    Uses the correlation between price movement and volume intensity:
+      - Strong up-move + high volume = likely delivery-based buying
+      - Strong up-move + low volume = speculative/operator-driven
+      - Down-move + high volume = institutional selling
+
+    This is a proxy since actual delivery data requires NSE Bhav copy.
+
+    Returns:
+        delivery_proxy_pct: estimated delivery ratio (50-90%)
+        institutional_conviction: "high" | "moderate" | "low"
+        smart_volume_score: 0-100
+    """
+    default = {"delivery_proxy_pct": 50.0, "institutional_conviction": "low",
+               "smart_volume_score": 50}
+    if df.empty or "Close" not in df.columns or "Volume" not in df.columns:
+        return default
+
+    close = df["Close"].astype(float)
+    volume = df["Volume"].astype(float)
+
+    if len(close) < 20:
+        return default
+
+    # Price changes and volume over last 20 days
+    returns = close.pct_change().tail(20).dropna()
+    vol_tail = volume.tail(20)
+    avg_vol = float(vol_tail.mean())
+
+    if avg_vol <= 0 or len(returns) < 10:
+        return default
+
+    # Count days with strong directional moves on high volume
+    high_vol_up_days = 0
+    high_vol_down_days = 0
+    total_days = len(returns)
+
+    returns_arr = returns.to_numpy()
+    vol_tail_arr = vol_tail.to_numpy()
+
+    for i in range(len(returns_arr)):
+        ret = float(returns_arr[i])
+        vol_val = float(vol_tail_arr[i + 1]) if i + 1 < len(vol_tail_arr) else avg_vol
+        vol_ratio = vol_val / avg_vol if avg_vol > 0 else 1.0
+
+        if ret > 0.005 and vol_ratio > 1.3:  # >0.5% up on 1.3x volume
+            high_vol_up_days += 1
+        elif ret < -0.005 and vol_ratio > 1.3:  # >0.5% down on 1.3x volume
+            high_vol_down_days += 1
+
+
+    # Delivery proxy estimation
+    net_conviction_days = high_vol_up_days - high_vol_down_days
+    conviction_ratio = net_conviction_days / total_days if total_days > 0 else 0
+
+    # Map to delivery proxy (50-90% range)
+    delivery_proxy = min(90, max(50, 50 + conviction_ratio * 80))
+
+    # Smart volume score
+    smart_score = min(100, max(0, 50 + net_conviction_days * 10))
+
+    if conviction_ratio > 0.15:
+        conviction = "high"
+    elif conviction_ratio > 0.05:
+        conviction = "moderate"
+    else:
+        conviction = "low"
+
+    return {
+        "delivery_proxy_pct": round(delivery_proxy, 1),
+        "institutional_conviction": conviction,
+        "smart_volume_score": round(smart_score, 1),
     }
