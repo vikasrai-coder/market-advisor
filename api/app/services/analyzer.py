@@ -104,20 +104,8 @@ def run_full_analysis(
         market_env = {"environment": "caution", "reasons": []}
         sector_cache = {}
 
-    if market_env.get("environment") == "risk_off":
-        reasons = ", ".join(market_env.get("reasons", ["unknown"]))
-        report(0, 0, "done", f"[{cfg.label}] SCAN SUPPRESSED — risk_off: {reasons}")
-        return {
-            "status": "scan_suppressed",
-            "trade_mode": mode,
-            "reason": f"Market in risk-off mode: {reasons}. No buy recommendations generated.",
-            "market_data": market_env,
-            "top_recommendations": [],
-            "signals": [],
-        }
-
-    # Caution mode → raise minimum composite threshold to 75
-    if market_env.get("environment") == "caution":
+    # Caution/Risk-off mode → raise minimum composite threshold to 75
+    if market_env.get("environment") in ("caution", "risk_off"):
         _breadth_threshold_override = 75.0
     else:
         _breadth_threshold_override = None  # use reconciler adaptive threshold
@@ -372,19 +360,77 @@ def run_full_analysis(
     if _breadth_threshold_override is not None:
         min_composite_score = max(min_composite_score, _breadth_threshold_override)
 
-    # FIX #6 — Quality filter: only keep stocks above minimum threshold
-    scored = [s for s in scored if s.get("composite_score", 0) >= min_composite_score or s.get("composite_score", 0) == 0]
-    # Re-sort after filtering (downtrend/blocked stocks already at 0, keep sorted)
-    scored.sort(key=lambda x: x["composite_score"], reverse=True)
-    # Only pass qualifying stocks (score >= threshold) to top buys selection
-    qualifying = [s for s in scored if s.get("composite_score", 0) >= min_composite_score]
-    if _macro_veto:
-        qualifying = []
-    normal_top_buys = _select_diversified_top_buys(qualifying, count=cfg.top_picks)
-    if macro_sentiment_score < 40:
-        top_buys = []
+    # Determine risk environment
+    is_macro_risk_off = (macro_sentiment_score < 40)
+    is_breadth_risk_off = (market_env.get("environment") == "risk_off")
+    reasons_list = []
+    if is_macro_risk_off:
+        reasons_list.append(f"Bearish macro sentiment ({macro_sentiment_score:.0f}/100)")
+    if is_breadth_risk_off:
+        breadth_reasons = ", ".join(market_env.get("reasons", ["unknown"]))
+        reasons_list.append(f"Market breadth risk-off ({breadth_reasons})")
+
+    # Group into priority tiers
+    if is_macro_risk_off or is_breadth_risk_off:
+        priority_1 = []
+        priority_2 = []
+        priority_3 = list(scored)
     else:
-        top_buys = normal_top_buys
+        priority_1 = [s for s in scored if not s.get("is_blocked", False) and s.get("composite_score", 0) >= min_composite_score]
+        priority_2 = [s for s in scored if not s.get("is_blocked", False) and s.get("composite_score", 0) < min_composite_score]
+        priority_3 = [s for s in scored if s.get("is_blocked", False)]
+
+    # Sort each priority tier
+    priority_1.sort(key=lambda x: x["composite_score"], reverse=True)
+    priority_2.sort(key=lambda x: x["composite_score"], reverse=True)
+    priority_3.sort(key=lambda x: x.get("relaxed_composite_score", 0), reverse=True)
+
+    # Try strict first
+    strict_qualifying = list(priority_1)
+    target_count = max(10, cfg.top_picks)
+    normal_top_buys = _select_diversified_top_buys(strict_qualifying, count=target_count)
+
+    fallback_active = False
+    if len(normal_top_buys) < target_count:
+        fallback_active = True
+        candidate_pool = priority_1 + priority_2 + priority_3
+        
+        def pool_sorting_key(x):
+            if not x.get("is_blocked", False) and x.get("composite_score", 0) >= min_composite_score and not (is_macro_risk_off or is_breadth_risk_off):
+                return (0, -x.get("composite_score", 0))
+            elif not x.get("is_blocked", False) and not (is_macro_risk_off or is_breadth_risk_off):
+                return (1, -x.get("composite_score", 0))
+            else:
+                return (2, -x.get("relaxed_composite_score", 0))
+        
+        candidate_pool.sort(key=pool_sorting_key)
+        
+        strict_symbols = {s["symbol"] for s in strict_qualifying}
+        for item in candidate_pool:
+            if item["symbol"] not in strict_symbols:
+                item["is_fallback"] = True
+            else:
+                item["is_fallback"] = False
+                
+        normal_top_buys = _select_diversified_top_buys(candidate_pool, count=target_count)
+
+    # Sort the final list to preserve priority and score order
+    def final_sorting_key(x):
+        if not x.get("is_blocked", False) and x.get("composite_score", 0) >= min_composite_score and not (is_macro_risk_off or is_breadth_risk_off):
+            return (0, -x.get("composite_score", 0))
+        elif not x.get("is_blocked", False) and not (is_macro_risk_off or is_breadth_risk_off):
+            return (1, -x.get("composite_score", 0))
+        else:
+            return (2, -x.get("relaxed_composite_score", 0))
+            
+    normal_top_buys.sort(key=final_sorting_key)
+    
+    # Adjust score of fallback/blocked items before submitting to parallel threads
+    for item in normal_top_buys:
+        if item.get("is_fallback", False) and item.get("is_blocked", False):
+            item["composite_score"] = item.get("relaxed_composite_score", 0.0)
+            
+    top_buys = normal_top_buys
 
     recommendations: list[dict[str, Any]] = []
     signals: list[dict[str, Any]] = []
@@ -468,12 +514,13 @@ def run_full_analysis(
             target_price = _target_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
             stop_loss = _stop_for_mode(item["metrics"].get("price"), cfg.mode, item.get("atr_levels"))
 
-            # BUG-05: Minimum R:R check as a final gate
+            # BUG-05: Minimum R:R check as a final gate (skip only if not a fallback recommendation)
             entry_price = item.get("ideal_entry_price") or item["metrics"].get("price")
+            is_fallback = item.get("is_fallback", False)
             if entry_price and stop_loss and target_price and stop_loss < entry_price:
                 rr = (target_price - entry_price) / (entry_price - stop_loss)
-                if rr < 2.0:
-                    continue  # skip this recommendation
+                if rr < 2.0 and not is_fallback:
+                    continue  # skip this recommendation if strict and poor R:R
 
             # Quantitative relative valuation scoring vs sector medians
             item_sector = item["profile"].get("sector")
@@ -488,94 +535,87 @@ def run_full_analysis(
             tier_info = classify_trade_tier(item["composite_score"], confirming_signals)
 
             reasoning = insight.get("reasoning", "") if isinstance(insight, dict) else str(insight)
+            if is_fallback:
+                reasons_warnings = []
+                if is_macro_risk_off or is_breadth_risk_off:
+                    reasons_warnings.append("MARKET RISK-OFF")
+                if item.get("is_blocked", False):
+                    reasons_warnings.append(f"Blocked: {', '.join(item.get('block_reasons', []))}")
+                elif item.get("composite_score", 0.0) < min_composite_score:
+                    reasons_warnings.append(f"Score {item.get('composite_score', 0.0):.1f} below threshold {min_composite_score:.1f}")
+                
+                warning_prefix = f"⚠️ [FALLBACK MODE: {', '.join(reasons_warnings)}] "
+                reasoning = warning_prefix + reasoning
+
             if item.get("overbought_warning"):
                 if "Overbought — reduced confidence" not in reasoning:
                     reasoning = reasoning.rstrip(".") + ". Overbought — reduced confidence."
 
             sentiment_gate_status = "passed" if macro_sentiment_score >= 40 else "overridden"
 
-            if macro_sentiment_score >= 40:
-                rec = {
+            rec = {
+                "id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "symbol": item["symbol"],
+                "cap_segment": item["profile"].get("cap_segment"),
+                "rank": rank,
+                "action": "buy",
+                "trade_mode": cfg.mode,
+                "composite_score": item["composite_score"],
+                "trend_score": item["metrics"].get("trend_score"),
+                "news_score": item["news_score"],
+                "technical_score": item["metrics"].get("technical_score"),
+                "fundamental_score": item["metrics"].get("fundamental_score"),
+                "ai_confidence": insight.get("confidence", 0.7) if isinstance(insight, dict) else 0.7,
+                "reasoning": reasoning,
+                "key_factors": insight.get("key_factors", []) if isinstance(insight, dict) else [],
+                "signal_date": signal_date.isoformat(),
+                "trade_date": trade_date.isoformat(),
+                "target_price": target_price,
+                "stop_loss": stop_loss,
+                "performance_status": "pending",
+                "vwap": item["metrics"].get("vwap"),
+                "bullish_crossover": item["metrics"].get("bullish_crossover"),
+                "golden_cross": item["metrics"].get("golden_cross"),
+                "range_52w_pct": item["metrics"].get("range_52w_pct"),
+                "pe_ratio": item["metrics"].get("pe_ratio"),
+                "dividend_yield": item["metrics"].get("dividend_yield"),
+                "is_undervalued": is_undervalued,
+                "overnight_gap_down_warning": macro_sentiment_score < 30 or overnight_gap_down_flag,
+                # Prompt 3 entries
+                "entry_type": item.get("entry_type", "immediate"),
+                "ideal_entry_price": item.get("ideal_entry_price"),
+                "entry_note": item.get("entry_note"),
+                "trade_tier": tier_info["tier"],
+                "position_size_pct": tier_info["position_size_pct"],
+                "confirming_signals": tier_info["confirming_signals"],
+                "stocks": {
+                    "name": item["profile"].get("name"),
+                    "sector": item["profile"].get("sector"),
+                    "pe_ratio": item["profile"].get("pe_ratio"),
+                    "market_cap": item["profile"].get("market_cap"),
+                    "is_undervalued": is_undervalued,
+                },
+                "sentiment_gate": sentiment_gate_status,
+            }
+            recommendations.append(rec)
+            signals.append(
+                {
                     "id": str(uuid.uuid4()),
                     "run_id": run_id,
                     "symbol": item["symbol"],
-                    "cap_segment": item["profile"].get("cap_segment"),
-                    "rank": rank,
-                    "action": "buy",
+                    "signal_type": "buy",
                     "trade_mode": cfg.mode,
-                    "composite_score": item["composite_score"],
-                    "trend_score": item["metrics"].get("trend_score"),
-                    "news_score": item["news_score"],
-                    "technical_score": item["metrics"].get("technical_score"),
-                    "fundamental_score": item["metrics"].get("fundamental_score"),
-                    "ai_confidence": insight.get("confidence", 0.7) if isinstance(insight, dict) else 0.7,
-                    "reasoning": reasoning,
-                    "key_factors": insight.get("key_factors", []) if isinstance(insight, dict) else [],
-                    "signal_date": signal_date.isoformat(),
-                    "trade_date": trade_date.isoformat(),
+                    "strength": _strength(item["composite_score"]),
+                    "price_at_signal": item["metrics"].get("price"),
                     "target_price": target_price,
                     "stop_loss": stop_loss,
-                    "performance_status": "pending",
-                    "vwap": item["metrics"].get("vwap"),
-                    "bullish_crossover": item["metrics"].get("bullish_crossover"),
-                    "golden_cross": item["metrics"].get("golden_cross"),
-                    "range_52w_pct": item["metrics"].get("range_52w_pct"),
-                    "pe_ratio": item["metrics"].get("pe_ratio"),
-                    "dividend_yield": item["metrics"].get("dividend_yield"),
-                    "is_undervalued": is_undervalued,
-                    "overnight_gap_down_warning": macro_sentiment_score < 30 or overnight_gap_down_flag,
-                    # Prompt 3 entries
-                    "entry_type": item.get("entry_type", "immediate"),
-                    "ideal_entry_price": item.get("ideal_entry_price"),
-                    "entry_note": item.get("entry_note"),
-                    "trade_tier": tier_info["tier"],
-                    "position_size_pct": tier_info["position_size_pct"],
-                    "confirming_signals": tier_info["confirming_signals"],
-                    "stocks": {
-                        "name": item["profile"].get("name"),
-                        "sector": item["profile"].get("sector"),
-                        "pe_ratio": item["profile"].get("pe_ratio"),
-                        "market_cap": item["profile"].get("market_cap"),
-                        "is_undervalued": is_undervalued,
-                    },
+                    "rationale": reasoning[:500],
+                    "signal_date": signal_date.isoformat(),
+                    "planned_trade_date": trade_date.isoformat(),
                     "sentiment_gate": sentiment_gate_status,
                 }
-                recommendations.append(rec)
-                signals.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "run_id": run_id,
-                        "symbol": item["symbol"],
-                        "signal_type": "buy",
-                        "trade_mode": cfg.mode,
-                        "strength": _strength(item["composite_score"]),
-                        "price_at_signal": item["metrics"].get("price"),
-                        "target_price": target_price,
-                        "stop_loss": stop_loss,
-                        "rationale": reasoning[:500],
-                        "signal_date": signal_date.isoformat(),
-                        "planned_trade_date": trade_date.isoformat(),
-                        "sentiment_gate": sentiment_gate_status,
-                    }
-                )
-            else:
-                signals.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "run_id": run_id,
-                        "symbol": item["symbol"],
-                        "signal_type": "hold",
-                        "trade_mode": cfg.mode,
-                        "strength": "weak",
-                        "price_at_signal": item["metrics"].get("price"),
-                        "target_price": target_price,
-                        "stop_loss": stop_loss,
-                        "rationale": f"HIGH RISK — bearish market. {reasoning}"[:500],
-                        "signal_date": signal_date.isoformat(),
-                        "planned_trade_date": trade_date.isoformat(),
-                        "sentiment_gate": sentiment_gate_status,
-                    }
-                )
+            )
             
         # Process sell results
         for future in as_completed(sell_futures):
@@ -755,88 +795,59 @@ def _analyze_symbol_swing(
         return {
             "symbol": symbol, "profile": profile, "metrics": {},
             "news_score": 50.0, "composite_score": 0.0, "news_rows": [],
+            "relaxed_composite_score": 0.0, "is_blocked": True, "block_reasons": ["No historical data"]
         }
     metrics = technicals.compute_indicators(history)
     articles = news_articles if news_articles is not None else []
     news_score = _compute_news_score(articles)
 
-    _zero = {
-        "symbol": symbol, "profile": profile, "metrics": metrics,
-        "news_score": round(news_score, 2), "composite_score": 0.0, "news_rows": [],
-    }
-
-    # FIX #1 — Market regime gate: block downtrend entries
+    # 1. Market regime
     regime = technicals.get_market_regime(history)
-    if not regime["tradeable"]:
-        return {**_zero, "regime_blocked": True,
-                "metrics": {**metrics, "regime": regime["regime"], "adx": regime["adx"]}}
+    regime_blocked = not regime["tradeable"]
 
-    # ENHANCEMENT #2 — Smart money gate: hard block on bearish divergence
+    # 2. Smart money
     smart_money = technicals.get_smart_money_signals(history)
-    if smart_money["signal"] == "distribution" and smart_money["bearish_divergence"]:
-        return {**_zero, "distribution_blocked": True}
+    distribution_blocked = (smart_money["signal"] == "distribution" and smart_money["bearish_divergence"])
 
-    # ENHANCEMENT #3 — Candlestick pattern: hard block on high-strength bearish reversal
+    # 3. Candlestick patterns
     candle_signals = technicals.get_candlestick_patterns(history)
     bearish_candles = [p for p in candle_signals["patterns"] if "bearish" in p["type"]]
-    if any(p["strength"] == "high" for p in bearish_candles):
-        return {**_zero, "bearish_candle_blocked": True}
+    bearish_candle_blocked = any(p["strength"] == "high" for p in bearish_candles)
 
-    # FIX #3 — Volume confirmation
+    # 4. Volume confirmation
     vol_conf = technicals.get_volume_confirmation(history)
 
-    # -------------------------------------------------------------------------
-    # Fix #2 — Stock Personality Profiling
-    # -------------------------------------------------------------------------
+    # 5. Stock Personality
     personality = technicals.get_stock_personality(profile, history)
-    if personality["personality"] == "avoid_today":
-        return {
-            **_zero,
-            "personality_blocked": True,
-            "reasoning": f"Avoid: {personality['rules']['note']}",
-        }
-
+    personality_blocked = (personality["personality"] == "avoid_today")
     rules = personality["rules"]
     atr_sl_multiplier = rules.get("atr_sl_multiplier", 2.0)
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
-    # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
-    # -------------------------------------------------------------------------
-
-    # -------------------------------------------------------------------------
-    # Fix #4 — Self-Learning Suppressions
-    # -------------------------------------------------------------------------
+    # 6. Self-Learning
     raw_sector = profile.get("sector")
     from app.services.sector_rs import _normalize_sector
     normalized_sector = _normalize_sector(raw_sector)
-    
     sector_learning_penalty = 0
+    mode_suppressed = False
     if learned:
         suppressed_sectors = learned.get("suppressed_sectors", [])
         suppressed_modes = learned.get("suppressed_trade_modes", [])
         if cfg.mode in suppressed_modes:
-            return {**_zero, "mode_suppressed": True, "reasoning": f"Avoid: trade mode '{cfg.mode}' suppressed by self-learning"}
+            mode_suppressed = True
         if raw_sector in suppressed_sectors or normalized_sector in suppressed_sectors:
             sector_learning_penalty = 25
 
-    # -------------------------------------------------------------------------
-    # Fix #2 — ATR-based SL/TP (using personality SL multiplier)
-    # -------------------------------------------------------------------------
+    # 7. ATR SL/TP
     price = metrics.get("price")
     atr_levels = technicals.get_atr_levels(history, price, sl_multiplier=atr_sl_multiplier) if price else None
 
-    # -------------------------------------------------------------------------
-    # Fix #1 — Entry Precision: wait for pullback
-    # -------------------------------------------------------------------------
+    # 8. Entry Precision
     entry_zone = technicals.get_optimal_entry_zone(history, regime, atr_levels["atr"] if atr_levels else 0.0)
-    if entry_zone["entry_type"] == "avoid":
-        return {**_zero, "entry_blocked": True, "reasoning": f"Avoid: {entry_zone['entry_note']}"}
-
+    entry_blocked = (entry_zone["entry_type"] == "avoid")
     entry_timing_penalty = 0
     if entry_zone["entry_type"] == "wait_dip":
         entry_timing_penalty = 10
-        # Recalculate levels from ideal entry price
         if atr_levels:
             atr_levels = technicals.get_atr_levels(
                 history,
@@ -844,31 +855,16 @@ def _analyze_symbol_swing(
                 sl_multiplier=atr_sl_multiplier
             )
 
-    # ENHANCEMENT #6 — Support/Resistance levels
+    # 9. Support/Resistance
     key_levels = technicals.get_key_levels(history)
 
-    # FIX #6 — New composite score formula
+    # 10. RSI & Overbought
     rsi = metrics.get("rsi")
-    if rsi is not None and rsi > 75:
-        return {**_zero, "rsi_overbought_blocked": True, "reasoning": "Overbought — RSI > 75"}
-
     rsi_val = rsi or 50.0
-    overbought_warning = False
-    if 70 <= rsi_val <= 75:
-        overbought_warning = True
+    rsi_overbought_blocked = (rsi is not None and rsi > 75)
+    overbought_warning = (70 <= rsi_val <= 75)
 
-    macd = metrics.get("macd")
-    macd_signal_val = metrics.get("macd_signal")
-    macd_cross = bool(macd is not None and macd_signal_val is not None and macd > macd_signal_val)
-    sma_20 = metrics.get("sma_20")
-    sma_50 = metrics.get("sma_50")
-    sma_200 = metrics.get("sma_200")
-    price_vs_sma = {
-        "above_sma20": bool(price and sma_20 and price > sma_20),
-        "above_sma50": bool(price and sma_50 and price > sma_50),
-        "above_sma200": bool(price and sma_200 and price > sma_200),
-    }
-    # Sentiment dict for gate (neutral default)
+    # 11. News Sentiment
     sentiment_dict: dict[str, Any] = {"label": "neutral", "score": 0.0}
     if settings.hf_token and articles:
         try:
@@ -880,37 +876,34 @@ def _analyze_symbol_swing(
                 sentiment_dict = {"label": label, "score": score}
         except Exception:
             pass
+    sentiment_blocked = (sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.75)
 
-    # FIX #5 — Hard sentiment gate
-    if sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.75:
-        return {**_zero, "sentiment_blocked": True}
-
-    composite = _compute_composite_score(
+    # Compute base composite score
+    base_composite = _compute_composite_score(
         regime=regime,
         rsi=rsi_val,
-        macd_cross=macd_cross,
+        macd_cross=bool(metrics.get("macd") is not None and metrics.get("macd_signal") is not None and metrics.get("macd") > metrics.get("macd_signal")),
         volume_conf=vol_conf,
         sentiment=sentiment_dict,
-        price_vs_sma=price_vs_sma,
+        price_vs_sma={
+            "above_sma20": bool(price and metrics.get("sma_20") and price > metrics.get("sma_20")),
+            "above_sma50": bool(price and metrics.get("sma_50") and price > metrics.get("sma_50")),
+            "above_sma200": bool(price and metrics.get("sma_200") and price > metrics.get("sma_200")),
+        },
         atr_levels=atr_levels,
     )
+
     if overbought_warning:
-        composite = max(0.0, composite - 20)
-
-    # Apply Stock Personality min volume penalty
+        base_composite = max(0.0, base_composite - 20)
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
-        composite = max(0.0, composite - 15)
-
-    # ENHANCEMENT #2 — Smart money score adjustment (non-blocking distribution)
+        base_composite = max(0.0, base_composite - 15)
     if smart_money["signal"] == "distribution":
-        composite = max(0.0, composite - 25)
+        base_composite = max(0.0, base_composite - 25)
     elif smart_money["signal"] == "accumulation":
-        composite = min(100.0, composite + 15)
+        base_composite = min(100.0, base_composite + 15)
+    base_composite = round(min(100.0, max(0.0, base_composite + candle_signals["score_delta"])), 2)
 
-    # ENHANCEMENT #3 — Candlestick pattern score delta
-    composite = round(min(100.0, max(0.0, composite + candle_signals["score_delta"])), 2)
-
-    # ENHANCEMENT #1 — Sector RS adjustment
+    # Sector RS
     sector_rs: dict[str, Any] = {"status": "neutral", "rs_score": 1.0}
     if normalized_sector:
         if sector_cache and normalized_sector in sector_cache:
@@ -921,34 +914,84 @@ def _analyze_symbol_swing(
             except Exception:
                 pass
     if sector_rs["status"] == "lagging":
-        composite = max(0.0, composite - 20)
+        base_composite = max(0.0, base_composite - 20)
     elif sector_rs["status"] == "leading":
-        composite = min(100.0, composite + 10)
+        base_composite = min(100.0, base_composite + 10)
 
-    # Prompt 2 lagging sector hard block unless score >= 80
-    if sector_rs["status"] == "lagging" and composite < 80:
-        return {**_zero, "lagging_sector_blocked": True, "reasoning": "Skip: lagging sector below score 80"}
+    # Lagging sector block
+    lagging_sector_blocked = (sector_rs["status"] == "lagging" and base_composite < 80)
 
-    # ENHANCEMENT #6 — Resistance blocking target path
     if key_levels["target_blocked"]:
-        composite = max(0.0, composite - 15)
-    # Adjust SL to sit below nearest support if ATR SL is above it
+        base_composite = max(0.0, base_composite - 15)
     if atr_levels and key_levels["nearest_support"]:
         if atr_levels["stop_loss"] > key_levels["nearest_support"]:
             atr_levels = {**atr_levels,
                           "stop_loss": round(key_levels["nearest_support"] * 0.995, 2)}
 
-    # Moderate negative news penalty (score 0.55–0.75)
     if sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.55:
-        composite = max(0.0, composite - 25)
+        base_composite = max(0.0, base_composite - 25)
 
     if macro_sentiment_score < 45:
         macro_modifier = (macro_sentiment_score - 50.0) * 0.4
-        composite = round(max(0.0, composite + macro_modifier), 2)
+        base_composite = round(max(0.0, base_composite + macro_modifier), 2)
 
-    # Apply Prompt 3 new penalties
-    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
-    composite = round(composite, 2)
+    base_composite = max(0.0, base_composite - sector_learning_penalty - entry_timing_penalty)
+    base_composite = round(base_composite, 2)
+
+    # R:R block check
+    rr = atr_levels["risk_reward"] if atr_levels else 0.0
+    rr_blocked = (rr < 2.0)
+
+    # Compile blocks
+    warnings = []
+    relaxed_penalties = 0.0
+
+    if regime_blocked:
+        relaxed_penalties += 25
+        warnings.append("Downtrend regime")
+    if distribution_blocked:
+        relaxed_penalties += 20
+        warnings.append("Institutional distribution")
+    if bearish_candle_blocked:
+        relaxed_penalties += 15
+        warnings.append("Bearish candlestick pattern")
+    if personality_blocked:
+        relaxed_penalties += 15
+        warnings.append("Avoid personality rule")
+    if entry_blocked:
+        relaxed_penalties += 15
+        warnings.append("Unfavorable entry zone")
+    if rsi_overbought_blocked:
+        relaxed_penalties += 20
+        warnings.append("RSI overbought (>75)")
+    if sentiment_blocked:
+        relaxed_penalties += 20
+        warnings.append("Negative news sentiment")
+    if lagging_sector_blocked:
+        relaxed_penalties += 20
+        warnings.append("Lagging sector")
+    if rr_blocked:
+        relaxed_penalties += 15
+        warnings.append("Low R:R ratio (<2.0)")
+    if mode_suppressed:
+        relaxed_penalties += 30
+        warnings.append("Trade mode suppressed")
+
+    is_blocked = (
+        regime_blocked or 
+        distribution_blocked or 
+        bearish_candle_blocked or 
+        personality_blocked or 
+        entry_blocked or 
+        rsi_overbought_blocked or 
+        sentiment_blocked or 
+        lagging_sector_blocked or 
+        rr_blocked or
+        mode_suppressed
+    )
+
+    strict_composite = 0.0 if is_blocked else base_composite
+    relaxed_composite = round(max(0.0, base_composite - relaxed_penalties), 2)
 
     news_rows = [
         {**article, "sentiment_label": sentiment_dict["label"], "sentiment_score": sentiment_dict["score"]}
@@ -967,7 +1010,6 @@ def _analyze_symbol_swing(
             "risk_reward": atr_levels["risk_reward"] if atr_levels else None,
             "atr_stop_loss": atr_levels["stop_loss"] if atr_levels else None,
             "atr_target_price": atr_levels["target_price"] if atr_levels else None,
-            # Enhancement signals
             "smart_money_signal": smart_money["signal"],
             "smart_money_cmf": smart_money["cmf"],
             "primary_candle_pattern": candle_signals["primary_pattern"],
@@ -978,24 +1020,24 @@ def _analyze_symbol_swing(
             "target_blocked": key_levels["target_blocked"],
         },
         "news_score": round(news_score, 2),
-        "composite_score": composite,
+        "composite_score": strict_composite,
+        "relaxed_composite_score": relaxed_composite,
+        "is_blocked": is_blocked,
+        "block_reasons": warnings,
         "news_rows": news_rows,
         "atr_levels": atr_levels,
         "overbought_warning": overbought_warning,
-        # Market context for Llama prompt (Enhancement #5)
         "market_context": {
             "sector_rs_status": sector_rs["status"],
             "market_environment": "caution" if macro_sentiment_score < 45 else "risk_on",
-            "nifty_vs_sma20": None,  # populated from market_ctx if needed
+            "nifty_vs_sma20": None,
             "smart_money": smart_money["reason"],
             "primary_candle": candle_signals["primary_pattern"],
         },
-        # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
         "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
-        # Prepopulate confirming signals list
         "confirming_signals_list": [
             sig for sig, cond in [
                 ("regime_uptrend", regime["regime"] == "uptrend"),
@@ -1034,114 +1076,80 @@ def _analyze_symbol_intraday(
         return {
             "symbol": symbol, "profile": profile, "metrics": {},
             "news_score": 50.0, "composite_score": 0.0, "news_rows": [],
+            "relaxed_composite_score": 0.0, "is_blocked": True, "block_reasons": ["No historical data"]
         }
 
     metrics = technicals.compute_intraday_indicators(history)
     articles = news_articles if news_articles is not None else []
     news_score = _compute_news_score(articles)
 
-    _blocked = {
-        "symbol": symbol, "profile": profile, "metrics": metrics,
-        "news_score": round(news_score, 2), "composite_score": 0.0, "news_rows": [],
-    }
-
-    # FIX #4 — Higher timeframe (daily) regime gate for intraday
+    # 1. Higher timeframe (daily) regime check
     try:
         if daily_history_df is not None and not daily_history_df.empty:
             daily_regime = technicals.get_market_regime(daily_history_df)
         else:
             daily_regime = {"regime": "sideways", "adx": 0.0, "tradeable": True}
-        if daily_regime["regime"] == "downtrend":
-            return {**_blocked, "regime_blocked": True}
+        daily_regime_blocked = (daily_regime["regime"] == "downtrend")
     except Exception:
         daily_regime = {"regime": "sideways", "adx": 0.0, "tradeable": True}
+        daily_regime_blocked = False
 
-    # FIX #1 — Intraday regime gate
+    # 2. Intraday regime
     intraday_regime = technicals.get_market_regime(history)
-    if not intraday_regime["tradeable"]:
-        return {**_blocked, "regime_blocked": True}
+    regime_blocked = not intraday_regime["tradeable"]
 
-    # ENHANCEMENT #2 — Smart money gate: hard block on bearish divergence
+    # 3. Smart money
     smart_money = technicals.get_smart_money_signals(history)
-    if smart_money["signal"] == "distribution" and smart_money["bearish_divergence"]:
-        return {**_blocked, "distribution_blocked": True}
+    distribution_blocked = (smart_money["signal"] == "distribution" and smart_money["bearish_divergence"])
 
-    # ENHANCEMENT #3 — Candlestick pattern: hard block on high-strength bearish reversal
+    # 4. Candlestick patterns
     candle_signals = technicals.get_candlestick_patterns(history)
     bearish_candles = [p for p in candle_signals["patterns"] if "bearish" in p["type"]]
-    if any(p["strength"] == "high" for p in bearish_candles):
-        return {**_blocked, "bearish_candle_blocked": True}
+    bearish_candle_blocked = any(p["strength"] == "high" for p in bearish_candles)
 
-    # FIX #8 — Intraday-specific rules
+    # 5. VWAP
     price = metrics.get("price")
     vwap = metrics.get("vwap")
+    vwap_blocked = bool(price and vwap and price < vwap)
+
+    # 6. RSI
     rsi = metrics.get("rsi") or 0.0
+    rsi_blocked = (rsi < 45)
+    rsi_overbought_blocked = (rsi > 78)
+    overbought_warning = (70 <= rsi <= 75)
 
-    # Require price above VWAP
-    if price and vwap and price < vwap:
-        return {**_blocked, "vwap_blocked": True}
-
-    # Require RSI >= 45 for intraday buy
-    if rsi < 45:
-        return {**_blocked, "rsi_blocked": True}
-
-    # BUG-01: RSI overbought gate check
-    overbought_warning = False
-    if rsi > 78:
-        return {**_blocked, "rsi_overbought_blocked": True, "composite_score": 0.0, "metrics": {**metrics, "rsi": rsi}}
-    elif 70 <= rsi <= 75:
-        overbought_warning = True
-
-    # FIX #3 — Volume confirmation
+    # 7. Volume confirmation
     vol_conf = technicals.get_volume_confirmation(history)
 
-    # -------------------------------------------------------------------------
-    # Fix #2 — Stock Personality Profiling
-    # -------------------------------------------------------------------------
+    # 8. Stock Personality
     personality = technicals.get_stock_personality(profile, history)
-    if personality["personality"] == "avoid_today":
-        return {
-            **_blocked,
-            "personality_blocked": True,
-            "reasoning": f"Avoid: {personality['rules']['note']}",
-        }
-
+    personality_blocked = (personality["personality"] == "avoid_today")
     rules = personality["rules"]
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
-    # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
-    # -------------------------------------------------------------------------
-
-    # -------------------------------------------------------------------------
-    # Fix #4 — Self-Learning Suppressions
-    # -------------------------------------------------------------------------
+    # 9. Self-Learning
     raw_sector = profile.get("sector")
+    from app.services.sector_rs import _normalize_sector
     normalized_sector = _normalize_sector(raw_sector)
-    
     sector_learning_penalty = 0
+    mode_suppressed = False
     if learned:
         suppressed_sectors = learned.get("suppressed_sectors", [])
         suppressed_modes = learned.get("suppressed_trade_modes", [])
         if cfg.mode in suppressed_modes:
-            return {**_blocked, "mode_suppressed": True, "reasoning": f"Avoid: trade mode '{cfg.mode}' suppressed by self-learning"}
+            mode_suppressed = True
         if raw_sector in suppressed_sectors or normalized_sector in suppressed_sectors:
             sector_learning_penalty = 25
 
-    # FIX #2 — ATR-based SL/TP (tighter 1.5x multiplier for intraday)
+    # 10. ATR SL/TP
     atr_levels = technicals.get_atr_levels(history, price, sl_multiplier=1.5, rr_ratio=2.0) if price else None
 
-    # -------------------------------------------------------------------------
-    # Fix #1 — Entry Precision: wait for pullback
-    # -------------------------------------------------------------------------
+    # 11. Entry Precision
     entry_zone = technicals.get_optimal_entry_zone(history, intraday_regime, atr_levels["atr"] if atr_levels else 0.0)
-    if entry_zone["entry_type"] == "avoid":
-        return {**_blocked, "entry_blocked": True, "reasoning": f"Avoid: {entry_zone['entry_note']}"}
-
+    entry_blocked = (entry_zone["entry_type"] == "avoid")
     entry_timing_penalty = 0
     if entry_zone["entry_type"] == "wait_dip":
         entry_timing_penalty = 10
-        # Recalculate levels from ideal entry price
         if atr_levels:
             atr_levels = technicals.get_atr_levels(
                 history,
@@ -1150,48 +1158,35 @@ def _analyze_symbol_intraday(
                 rr_ratio=2.0
             )
 
-    # ENHANCEMENT #6 — Support/Resistance levels
+    # 12. Support/Resistance
     key_levels = technicals.get_key_levels(history)
 
-    # FIX #6 — New composite score
-    macd = metrics.get("macd")
-    macd_signal = metrics.get("macd_signal")
-    macd_cross = bool(macd is not None and macd_signal is not None and macd > macd_signal)
-    sma_9 = metrics.get("sma_9")
-    sma_21 = metrics.get("sma_21")
-    price_vs_sma = {
-        "above_sma20": bool(price and sma_9 and price > sma_9),
-        "above_sma50": bool(price and sma_21 and price > sma_21),
-        "above_sma200": False,
-    }
-    sentiment_dict: dict[str, Any] = {"label": "neutral", "score": 0.0}
-
-    composite = _compute_composite_score(
+    # Compute base composite score
+    base_composite = _compute_composite_score(
         regime=intraday_regime,
         rsi=rsi,
-        macd_cross=macd_cross,
+        macd_cross=bool(metrics.get("macd") is not None and metrics.get("macd_signal") is not None and metrics.get("macd") > metrics.get("macd_signal")),
         volume_conf=vol_conf,
-        sentiment=sentiment_dict,
-        price_vs_sma=price_vs_sma,
+        sentiment={"label": "neutral", "score": 0.0},
+        price_vs_sma={
+            "above_sma20": bool(price and metrics.get("sma_9") and price > metrics.get("sma_9")),
+            "above_sma50": bool(price and metrics.get("sma_21") and price > metrics.get("sma_21")),
+            "above_sma200": False,
+        },
         atr_levels=atr_levels,
     )
+
     if overbought_warning:
-        composite = max(0.0, composite - 20)
-
-    # Apply Stock Personality min volume penalty
+        base_composite = max(0.0, base_composite - 20)
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
-        composite = max(0.0, composite - 15)
-
-    # ENHANCEMENT #2 — Smart money score adjustment (non-blocking distribution)
+        base_composite = max(0.0, base_composite - 15)
     if smart_money["signal"] == "distribution":
-        composite = max(0.0, composite - 25)
+        base_composite = max(0.0, base_composite - 25)
     elif smart_money["signal"] == "accumulation":
-        composite = min(100.0, composite + 15)
+        base_composite = min(100.0, base_composite + 15)
+    base_composite = round(min(100.0, max(0.0, base_composite + candle_signals["score_delta"])), 2)
 
-    # ENHANCEMENT #3 — Candlestick pattern score delta
-    composite = round(min(100.0, max(0.0, composite + candle_signals["score_delta"])), 2)
-
-    # ENHANCEMENT #1 — Sector RS adjustment
+    # Sector RS
     sector_rs: dict[str, Any] = {"status": "neutral", "rs_score": 1.0}
     if normalized_sector:
         if sector_cache and normalized_sector in sector_cache:
@@ -1202,18 +1197,15 @@ def _analyze_symbol_intraday(
             except Exception:
                 pass
     if sector_rs["status"] == "lagging":
-        composite = max(0.0, composite - 20)
+        base_composite = max(0.0, base_composite - 20)
     elif sector_rs["status"] == "leading":
-        composite = min(100.0, composite + 10)
+        base_composite = min(100.0, base_composite + 10)
 
-    # Prompt 2 lagging sector hard block unless score >= 80
-    if sector_rs["status"] == "lagging" and composite < 80:
-        return {**_blocked, "lagging_sector_blocked": True, "reasoning": "Skip: lagging sector below score 80"}
+    # Lagging sector block
+    lagging_sector_blocked = (sector_rs["status"] == "lagging" and base_composite < 80)
 
-    # ENHANCEMENT #6 — Resistance blocking target path
     if key_levels["target_blocked"]:
-        composite = max(0.0, composite - 15)
-    # Adjust SL to sit below nearest support if ATR SL is above it
+        base_composite = max(0.0, base_composite - 15)
     if atr_levels and key_levels["nearest_support"]:
         if atr_levels["stop_loss"] > key_levels["nearest_support"]:
             atr_levels = {**atr_levels,
@@ -1221,11 +1213,73 @@ def _analyze_symbol_intraday(
 
     if macro_sentiment_score < 45:
         macro_modifier = (macro_sentiment_score - 50.0) * 0.4
-        composite = round(max(0.0, composite + macro_modifier), 2)
+        base_composite = round(max(0.0, base_composite + macro_modifier), 2)
 
-    # Apply Prompt 3 penalties
-    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
-    composite = round(composite, 2)
+    base_composite = max(0.0, base_composite - sector_learning_penalty - entry_timing_penalty)
+    base_composite = round(base_composite, 2)
+
+    # R:R block check
+    rr = atr_levels["risk_reward"] if atr_levels else 0.0
+    rr_blocked = (rr < 2.0)
+
+    # Compile blocks
+    warnings = []
+    relaxed_penalties = 0.0
+
+    if daily_regime_blocked:
+        relaxed_penalties += 25
+        warnings.append("Daily timeframe downtrend")
+    if regime_blocked:
+        relaxed_penalties += 25
+        warnings.append("Intraday downtrend")
+    if distribution_blocked:
+        relaxed_penalties += 20
+        warnings.append("Institutional distribution")
+    if bearish_candle_blocked:
+        relaxed_penalties += 15
+        warnings.append("Bearish candlestick pattern")
+    if vwap_blocked:
+        relaxed_penalties += 15
+        warnings.append("Price below VWAP")
+    if rsi_blocked:
+        relaxed_penalties += 15
+        warnings.append("RSI weak (<45)")
+    if rsi_overbought_blocked:
+        relaxed_penalties += 20
+        warnings.append("RSI overbought (>78)")
+    if personality_blocked:
+        relaxed_penalties += 15
+        warnings.append("Avoid personality rule")
+    if entry_blocked:
+        relaxed_penalties += 15
+        warnings.append("Unfavorable entry zone")
+    if lagging_sector_blocked:
+        relaxed_penalties += 20
+        warnings.append("Lagging sector")
+    if rr_blocked:
+        relaxed_penalties += 15
+        warnings.append("Low R:R ratio (<2.0)")
+    if mode_suppressed:
+        relaxed_penalties += 30
+        warnings.append("Trade mode suppressed")
+
+    is_blocked = (
+        daily_regime_blocked or 
+        regime_blocked or 
+        distribution_blocked or 
+        bearish_candle_blocked or 
+        vwap_blocked or 
+        rsi_blocked or 
+        rsi_overbought_blocked or 
+        personality_blocked or 
+        entry_blocked or 
+        lagging_sector_blocked or 
+        rr_blocked or
+        mode_suppressed
+    )
+
+    strict_composite = 0.0 if is_blocked else base_composite
+    relaxed_composite = round(max(0.0, base_composite - relaxed_penalties), 2)
 
     return {
         "symbol": symbol,
@@ -1239,7 +1293,6 @@ def _analyze_symbol_intraday(
             "risk_reward": atr_levels["risk_reward"] if atr_levels else None,
             "atr_stop_loss": atr_levels["stop_loss"] if atr_levels else None,
             "atr_target_price": atr_levels["target_price"] if atr_levels else None,
-            # Enhancement signals
             "smart_money_signal": smart_money["signal"],
             "smart_money_cmf": smart_money["cmf"],
             "primary_candle_pattern": candle_signals["primary_pattern"],
@@ -1250,11 +1303,13 @@ def _analyze_symbol_intraday(
             "target_blocked": key_levels["target_blocked"],
         },
         "news_score": round(news_score, 2),
-        "composite_score": composite,
+        "composite_score": strict_composite,
+        "relaxed_composite_score": relaxed_composite,
+        "is_blocked": is_blocked,
+        "block_reasons": warnings,
         "news_rows": [],
         "atr_levels": atr_levels,
         "overbought_warning": overbought_warning,
-        # Market context for Llama prompt
         "market_context": {
             "sector_rs_status": sector_rs["status"],
             "market_environment": "caution" if macro_sentiment_score < 45 else "risk_on",
@@ -1262,12 +1317,10 @@ def _analyze_symbol_intraday(
             "smart_money": smart_money["reason"],
             "primary_candle": candle_signals["primary_pattern"],
         },
-        # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
         "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
-        # Prepopulate confirming signals list
         "confirming_signals_list": [
             sig for sig, cond in [
                 ("regime_uptrend", intraday_regime["regime"] == "uptrend"),
@@ -1302,80 +1355,53 @@ def _analyze_symbol_longterm(
     articles = news_articles if news_articles is not None else []
     news_score = _compute_news_score(articles)
 
-    _zero = {
-        "symbol": symbol, "profile": profile, "metrics": metrics,
-        "news_score": round(news_score, 2), "composite_score": 0.0, "news_rows": [],
-    }
-
-    # FIX #1 — Market regime gate
+    # 1. Market regime
     regime = technicals.get_market_regime(history)
-    if not regime["tradeable"]:
-        return {**_zero, "regime_blocked": True,
-                "metrics": {**metrics, "regime": regime["regime"], "adx": regime["adx"]}}
+    regime_blocked = not regime["tradeable"]
 
-    # ENHANCEMENT #2 — Smart money gate: hard block on bearish divergence
+    # 2. Smart money
     smart_money = technicals.get_smart_money_signals(history)
-    if smart_money["signal"] == "distribution" and smart_money["bearish_divergence"]:
-        return {**_zero, "distribution_blocked": True}
+    distribution_blocked = (smart_money["signal"] == "distribution" and smart_money["bearish_divergence"])
 
-    # ENHANCEMENT #3 — Candlestick pattern: hard block on high-strength bearish reversal
+    # 3. Candlestick patterns
     candle_signals = technicals.get_candlestick_patterns(history)
     bearish_candles = [p for p in candle_signals["patterns"] if "bearish" in p["type"]]
-    if any(p["strength"] == "high" for p in bearish_candles):
-        return {**_zero, "bearish_candle_blocked": True}
+    bearish_candle_blocked = any(p["strength"] == "high" for p in bearish_candles)
 
-    # FIX #3 — Volume confirmation
+    # 4. Volume confirmation
     vol_conf = technicals.get_volume_confirmation(history)
 
-    # -------------------------------------------------------------------------
-    # Fix #2 — Stock Personality Profiling
-    # -------------------------------------------------------------------------
+    # 5. Stock Personality
     personality = technicals.get_stock_personality(profile, history)
-    if personality["personality"] == "avoid_today":
-        return {
-            **_zero,
-            "personality_blocked": True,
-            "reasoning": f"Avoid: {personality['rules']['note']}",
-        }
-
+    personality_blocked = (personality["personality"] == "avoid_today")
     rules = personality["rules"]
     atr_sl_multiplier = rules.get("atr_sl_multiplier", 2.0)
     min_volume_ratio = rules.get("min_volume_ratio", 1.5)
 
-    # -------------------------------------------------------------------------
-    # Fix #3 — Earnings & Event Risk Calendar (Deferred to second pass for performance)
-    # -------------------------------------------------------------------------
-
-    # -------------------------------------------------------------------------
-    # Fix #4 — Self-Learning Suppressions
-    # -------------------------------------------------------------------------
+    # 6. Self-Learning
     raw_sector = profile.get("sector")
+    from app.services.sector_rs import _normalize_sector
     normalized_sector = _normalize_sector(raw_sector)
-    
     sector_learning_penalty = 0
+    mode_suppressed = False
     if learned:
         suppressed_sectors = learned.get("suppressed_sectors", [])
         suppressed_modes = learned.get("suppressed_trade_modes", [])
         if cfg.mode in suppressed_modes:
-            return {**_zero, "mode_suppressed": True, "reasoning": f"Avoid: trade mode '{cfg.mode}' suppressed by self-learning"}
+            mode_suppressed = True
         if raw_sector in suppressed_sectors or normalized_sector in suppressed_sectors:
             sector_learning_penalty = 25
 
-    # FIX #2 — ATR-based SL/TP (using personality SL multiplier)
+    # 7. ATR SL/TP
     price = metrics.get("price")
     atr_levels = technicals.get_atr_levels(history, price, sl_multiplier=atr_sl_multiplier) if price else None
 
-    # -------------------------------------------------------------------------
-    # Fix #1 — Entry Precision: wait for pullback
-    # -------------------------------------------------------------------------
+    # 8. Entry Precision
     entry_zone = technicals.get_optimal_entry_zone(history, regime, atr_levels["atr"] if atr_levels else 0.0)
-    if entry_zone["entry_type"] == "avoid":
-        return {**_zero, "entry_blocked": True, "reasoning": f"Avoid: {entry_zone['entry_note']}"}
-
+    entry_blocked = (entry_zone["entry_type"] == "avoid")
     entry_timing_penalty = 0
     if entry_zone["entry_type"] == "wait_dip":
         entry_timing_penalty = 10
-        # Recalculate levels from ideal entry price
         if atr_levels:
             atr_levels = technicals.get_atr_levels(
                 history,
@@ -1383,30 +1409,16 @@ def _analyze_symbol_longterm(
                 sl_multiplier=atr_sl_multiplier
             )
 
-    # ENHANCEMENT #6 — Support/Resistance levels
+    # 9. Support/Resistance
     key_levels = technicals.get_key_levels(history)
 
-    # FIX #6 — New composite score calculation
+    # 10. RSI & Overbought
     rsi = metrics.get("rsi")
-    if rsi is not None and rsi > 75:
-        return {**_zero, "rsi_overbought_blocked": True, "reasoning": "Overbought — RSI > 75"}
-
     rsi_val = rsi or 50.0
-    overbought_warning = False
-    if 70 <= rsi_val <= 75:
-        overbought_warning = True
+    rsi_overbought_blocked = (rsi is not None and rsi > 75)
+    overbought_warning = (70 <= rsi_val <= 75)
 
-    macd = metrics.get("macd")
-    macd_signal_val = metrics.get("macd_signal")
-    macd_cross = bool(macd is not None and macd_signal_val is not None and macd > macd_signal_val)
-    sma_20 = metrics.get("sma_20")
-    sma_50 = metrics.get("sma_50")
-    sma_200 = metrics.get("sma_200")
-    price_vs_sma = {
-        "above_sma20": bool(price and sma_20 and price > sma_20),
-        "above_sma50": bool(price and sma_50 and price > sma_50),
-        "above_sma200": bool(price and sma_200 and price > sma_200),
-    }
+    # 11. News Sentiment
     sentiment_dict: dict[str, Any] = {"label": "neutral", "score": 0.0}
     if settings.hf_token and articles:
         try:
@@ -1418,37 +1430,34 @@ def _analyze_symbol_longterm(
                 sentiment_dict = {"label": label, "score": score}
         except Exception:
             pass
+    sentiment_blocked = (sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.75)
 
-    # FIX #5 — Hard sentiment gate
-    if sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.75:
-        return {**_zero, "sentiment_blocked": True}
-
-    composite = _compute_composite_score(
+    # Compute base composite score
+    base_composite = _compute_composite_score(
         regime=regime,
         rsi=rsi_val,
-        macd_cross=macd_cross,
+        macd_cross=bool(metrics.get("macd") is not None and metrics.get("macd_signal") is not None and metrics.get("macd") > metrics.get("macd_signal")),
         volume_conf=vol_conf,
         sentiment=sentiment_dict,
-        price_vs_sma=price_vs_sma,
+        price_vs_sma={
+            "above_sma20": bool(price and metrics.get("sma_20") and price > metrics.get("sma_20")),
+            "above_sma50": bool(price and metrics.get("sma_50") and price > metrics.get("sma_50")),
+            "above_sma200": bool(price and metrics.get("sma_200") and price > metrics.get("sma_200")),
+        },
         atr_levels=atr_levels,
     )
+
     if overbought_warning:
-        composite = max(0.0, composite - 20)
-
-    # Apply Stock Personality min volume penalty
+        base_composite = max(0.0, base_composite - 20)
     if vol_conf.get("volume_ratio", 1.0) < min_volume_ratio:
-        composite = max(0.0, composite - 15)
-
-    # ENHANCEMENT #2 — Smart money score adjustment (non-blocking distribution)
+        base_composite = max(0.0, base_composite - 15)
     if smart_money["signal"] == "distribution":
-        composite = max(0.0, composite - 25)
+        base_composite = max(0.0, base_composite - 25)
     elif smart_money["signal"] == "accumulation":
-        composite = min(100.0, composite + 15)
+        base_composite = min(100.0, base_composite + 15)
+    base_composite = round(min(100.0, max(0.0, base_composite + candle_signals["score_delta"])), 2)
 
-    # ENHANCEMENT #3 — Candlestick pattern score delta
-    composite = round(min(100.0, max(0.0, composite + candle_signals["score_delta"])), 2)
-
-    # ENHANCEMENT #1 — Sector RS adjustment
+    # Sector RS
     sector_rs: dict[str, Any] = {"status": "neutral", "rs_score": 1.0}
     if normalized_sector:
         if sector_cache and normalized_sector in sector_cache:
@@ -1459,46 +1468,94 @@ def _analyze_symbol_longterm(
             except Exception:
                 pass
     if sector_rs["status"] == "lagging":
-        composite = max(0.0, composite - 20)
+        base_composite = max(0.0, base_composite - 20)
     elif sector_rs["status"] == "leading":
-        composite = min(100.0, composite + 10)
+        base_composite = min(100.0, base_composite + 10)
 
-    # Prompt 2 lagging sector hard block unless score >= 80
-    if sector_rs["status"] == "lagging" and composite < 80:
-        return {**_zero, "lagging_sector_blocked": True, "reasoning": "Skip: lagging sector below score 80"}
+    # Lagging sector block
+    lagging_sector_blocked = (sector_rs["status"] == "lagging" and base_composite < 80)
 
-    # ENHANCEMENT #6 — Resistance blocking target path
     if key_levels["target_blocked"]:
-        composite = max(0.0, composite - 15)
-    # Adjust SL to sit below nearest support if ATR SL is above it
+        base_composite = max(0.0, base_composite - 15)
     if atr_levels and key_levels["nearest_support"]:
         if atr_levels["stop_loss"] > key_levels["nearest_support"]:
             atr_levels = {**atr_levels,
                           "stop_loss": round(key_levels["nearest_support"] * 0.995, 2)}
 
-    # Moderate negative news penalty (score 0.55–0.75)
     if sentiment_dict["label"] == "negative" and sentiment_dict["score"] > 0.55:
-        composite = max(0.0, composite - 25)
+        base_composite = max(0.0, base_composite - 25)
 
     if macro_sentiment_score < 45:
         macro_modifier = (macro_sentiment_score - 50.0) * 0.4
-        composite = round(max(0.0, composite + macro_modifier), 2)
+        base_composite = round(max(0.0, base_composite + macro_modifier), 2)
 
-    # Apply Prompt 3 new penalties
-    composite = max(0.0, composite - sector_learning_penalty - entry_timing_penalty)
+    base_composite = max(0.0, base_composite - sector_learning_penalty - entry_timing_penalty)
 
-    # -------------------------------------------------------------------------
-    # NEW — Fundamental blend criteria (+15/-15)
-    # -------------------------------------------------------------------------
+    # Longterm fundamental blend
     fundamental_score = metrics.get("fundamental_score") or 50.0
     if fundamental_score >= 70:
-        composite = min(100.0, composite + 15)
+        base_composite = min(100.0, base_composite + 15)
     elif fundamental_score >= 55:
-        composite = min(100.0, composite + 5)
+        base_composite = min(100.0, base_composite + 5)
     elif fundamental_score < 40:
-        composite = max(0.0, composite - 15)
+        base_composite = max(0.0, base_composite - 15)
 
-    composite = round(composite, 2)
+    base_composite = round(base_composite, 2)
+
+    # R:R block check
+    rr = atr_levels["risk_reward"] if atr_levels else 0.0
+    rr_blocked = (rr < 2.0)
+
+    # Compile blocks
+    warnings = []
+    relaxed_penalties = 0.0
+
+    if regime_blocked:
+        relaxed_penalties += 25
+        warnings.append("Downtrend regime")
+    if distribution_blocked:
+        relaxed_penalties += 20
+        warnings.append("Institutional distribution")
+    if bearish_candle_blocked:
+        relaxed_penalties += 15
+        warnings.append("Bearish candlestick pattern")
+    if personality_blocked:
+        relaxed_penalties += 15
+        warnings.append("Avoid personality rule")
+    if entry_blocked:
+        relaxed_penalties += 15
+        warnings.append("Unfavorable entry zone")
+    if rsi_overbought_blocked:
+        relaxed_penalties += 20
+        warnings.append("RSI overbought (>75)")
+    if sentiment_blocked:
+        relaxed_penalties += 20
+        warnings.append("Negative news sentiment")
+    if lagging_sector_blocked:
+        relaxed_penalties += 20
+        warnings.append("Lagging sector")
+    if rr_blocked:
+        relaxed_penalties += 15
+        warnings.append("Low R:R ratio (<2.0)")
+    if mode_suppressed:
+        relaxed_penalties += 30
+        warnings.append("Trade mode suppressed")
+
+    is_blocked = (
+        regime_blocked or 
+        distribution_blocked or 
+        bearish_candle_blocked or 
+        personality_blocked or 
+        entry_blocked or 
+        rsi_overbought_blocked or 
+        sentiment_blocked or 
+        lagging_sector_blocked or 
+        rr_blocked or
+        mode_suppressed
+    )
+
+    strict_composite = 0.0 if is_blocked else base_composite
+    relaxed_composite = round(max(0.0, base_composite - relaxed_penalties), 2)
 
     news_rows = [
         {**article, "sentiment_label": sentiment_dict["label"], "sentiment_score": sentiment_dict["score"]}
@@ -1517,7 +1574,6 @@ def _analyze_symbol_longterm(
             "risk_reward": atr_levels["risk_reward"] if atr_levels else None,
             "atr_stop_loss": atr_levels["stop_loss"] if atr_levels else None,
             "atr_target_price": atr_levels["target_price"] if atr_levels else None,
-            # Enhancement signals
             "smart_money_signal": smart_money["signal"],
             "smart_money_cmf": smart_money["cmf"],
             "primary_candle_pattern": candle_signals["primary_pattern"],
@@ -1528,11 +1584,13 @@ def _analyze_symbol_longterm(
             "target_blocked": key_levels["target_blocked"],
         },
         "news_score": round(news_score, 2),
-        "composite_score": composite,
+        "composite_score": strict_composite,
+        "relaxed_composite_score": relaxed_composite,
+        "is_blocked": is_blocked,
+        "block_reasons": warnings,
         "news_rows": news_rows,
         "atr_levels": atr_levels,
         "overbought_warning": overbought_warning,
-        # Market context for Llama prompt
         "market_context": {
             "sector_rs_status": sector_rs["status"],
             "market_environment": "caution" if macro_sentiment_score < 45 else "risk_on",
@@ -1540,12 +1598,10 @@ def _analyze_symbol_longterm(
             "smart_money": smart_money["reason"],
             "primary_candle": candle_signals["primary_pattern"],
         },
-        # Prompt 3 entries
         "entry_type": entry_zone["entry_type"],
         "ideal_entry_price": entry_zone["ideal_entry"],
         "entry_note": entry_zone["entry_note"],
         "personality": personality["personality"],
-        # Prepopulate confirming signals list
         "confirming_signals_list": [
             sig for sig, cond in [
                 ("regime_uptrend", regime["regime"] == "uptrend"),
