@@ -592,11 +592,23 @@ export type AlphaAlert = {
 };
 
 export type AlphaAlertResponse = {
+  status: "success" | "running" | "no_cache";
+  job_id?: string;
+  message?: string;
   alerts: AlphaAlert[];
   scanned: number;
   passed: number;
-  generated_at: string;
-  thresholds: Record<string, number | boolean>;
+  generated_at?: string;
+  thresholds?: Record<string, number | boolean>;
+};
+
+export type AlphaAlertJob = {
+  job_id: string;
+  status: "running" | "completed" | "failed" | "idle";
+  progress?: number;
+  message?: string;
+  result?: AlphaAlertResponse;
+  error?: string;
 };
 
 export type AlphaDailyStat = {
@@ -628,8 +640,13 @@ export type AlphaPerformance = {
   adaptive_thresholds: Record<string, number | string>;
 };
 
-export async function adminGetAlphaAlerts() {
-  return fetchJson<AlphaAlertResponse>("/api/admin/alpha-alerts");
+export async function adminGetAlphaAlerts(refresh = false) {
+  const q = refresh ? "?refresh=true" : "";
+  return fetchJson<AlphaAlertResponse>(`/api/admin/alpha-alerts${q}`);
+}
+
+export async function adminGetAlphaAlertsStatus(jobId: string) {
+  return fetchJson<AlphaAlertJob>(`/api/admin/alpha-alerts/status/${jobId}`);
 }
 
 export async function adminGetAlphaPerformance() {

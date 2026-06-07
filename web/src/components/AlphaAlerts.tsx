@@ -29,6 +29,7 @@ import {
 } from "@ant-design/icons";
 import {
   adminGetAlphaAlerts,
+  adminGetAlphaAlertsStatus,
   adminGetAlphaPerformance,
   adminReconcileAlpha,
   type AlphaAlert,
@@ -56,6 +57,8 @@ export default function AlphaAlerts({ userId: propUserId }: { userId?: string })
   const [loading, setLoading] = useState(false);
   const [perfLoading, setPerfLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const pollingRef = React.useRef(false);
 
   const loadPerformance = useCallback(async () => {
     setPerfLoading(true);
@@ -69,23 +72,71 @@ export default function AlphaAlerts({ userId: propUserId }: { userId?: string })
     }
   }, []);
 
-  const loadAlerts = useCallback(async () => {
-    setLoading(true);
+  const pollJob = useCallback(async (jobId: string) => {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
     try {
-      const data = await adminGetAlphaAlerts();
-      setAlerts(data.alerts ?? []);
-      setScanned(data.scanned ?? 0);
-      setGeneratedAt(data.generated_at ?? null);
-      messageApi.success(
-        `Scanned ${data.scanned} stocks — ${data.passed} alpha alerts found`
-      );
+      let completed = false;
+      while (!completed) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const job = await adminGetAlphaAlertsStatus(jobId);
+        if (job.status === "completed" && job.result) {
+          const res = job.result;
+          setAlerts(res.alerts ?? []);
+          setScanned(res.scanned ?? 0);
+          setGeneratedAt(res.generated_at ?? null);
+          messageApi.success(
+            `Scanned ${res.scanned} stocks — ${res.passed} alpha alerts found`
+          );
+          completed = true;
+        } else if (job.status === "failed") {
+          throw new Error(job.error || "Scan failed");
+        } else if (job.message) {
+          setJobStatus(job.message);
+        }
+      }
+    } finally {
+      pollingRef.current = false;
+    }
+  }, [messageApi]);
+
+  const loadAlerts = useCallback(async (refresh = false) => {
+    setLoading(true);
+    setJobStatus(refresh ? "Starting refresh scan..." : "Loading alpha alerts...");
+    try {
+      const data = await adminGetAlphaAlerts(refresh);
+      if (data.status === "success" && data.alerts) {
+        setAlerts(data.alerts);
+        setScanned(data.scanned);
+        setGeneratedAt(data.generated_at ?? null);
+        if (refresh) {
+          messageApi.success(
+            `Scanned ${data.scanned} stocks — ${data.passed} alpha alerts found`
+          );
+        }
+      } else if (data.status === "running" && data.job_id) {
+        setJobStatus("Scan running in background...");
+        await pollJob(data.job_id);
+      } else if (data.status === "no_cache") {
+        // No cache exists yet, so trigger a refresh automatically
+        const response = await adminGetAlphaAlerts(true);
+        if (response.status === "running" && response.job_id) {
+          setJobStatus("Initializing scan...");
+          await pollJob(response.job_id);
+        } else if (response.status === "success" && response.alerts) {
+          setAlerts(response.alerts);
+          setScanned(response.scanned);
+          setGeneratedAt(response.generated_at ?? null);
+        }
+      }
     } catch (err) {
       messageApi.error("Failed to load alpha alerts");
       console.error(err);
     } finally {
       setLoading(false);
+      setJobStatus(null);
     }
-  }, [messageApi]);
+  }, [messageApi, pollJob]);
 
   const handleReconcile = async () => {
     setReconciling(true);
@@ -104,7 +155,8 @@ export default function AlphaAlerts({ userId: propUserId }: { userId?: string })
 
   useEffect(() => {
     loadPerformance();
-  }, [loadPerformance]);
+    loadAlerts(false);
+  }, [loadPerformance, loadAlerts]);
 
   return (
     <div className="space-y-6">
@@ -137,7 +189,7 @@ export default function AlphaAlerts({ userId: propUserId }: { userId?: string })
           <Button
             type="primary"
             icon={<ReloadOutlined />}
-            onClick={loadAlerts}
+            onClick={() => loadAlerts(true)}
             loading={loading}
             className="!bg-gradient-to-r !from-amber-500 !to-orange-600 !border-none !font-bold !shadow-lg !shadow-amber-500/25 hover:!shadow-amber-500/40"
           >
@@ -155,7 +207,7 @@ export default function AlphaAlerts({ userId: propUserId }: { userId?: string })
           <div className="text-center">
             <Spin size="large" />
             <p className="mt-3 text-sm text-slate-400">
-              Scanning {scanned > 0 ? `${scanned} stocks` : "market"}…
+              {jobStatus || (scanned > 0 ? `Scanning ${scanned} stocks...` : "Scanning market...")}
             </p>
           </div>
         </div>

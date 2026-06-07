@@ -87,12 +87,12 @@ def run_full_analysis(
     except Exception as exc:
         print(f"Error fetching macro/NIFTY news: {exc}")
 
-    if macro_sentiment_score < 35:
-        min_composite_score_override = 80.0  # raise bar significantly
+    if macro_sentiment_score < 25:
+        min_composite_score_override = 80.0  # raise bar only on extreme panic
         overnight_gap_down_flag = True
 
     _macro_veto = False
-    if macro_sentiment_score < 40:
+    if macro_sentiment_score < 25:
         _macro_veto = True
 
     # ENHANCEMENT #4 — Market Breadth Gate (runs ONCE, before any stock is evaluated)
@@ -104,9 +104,11 @@ def run_full_analysis(
         market_env = {"environment": "caution", "reasons": []}
         sector_cache = {}
 
-    # Caution/Risk-off mode → raise minimum composite threshold to 75
-    if market_env.get("environment") in ("caution", "risk_off"):
+    # Graduated breadth threshold: caution = mild raise, risk_off = significant raise
+    if market_env.get("environment") == "risk_off":
         _breadth_threshold_override = 75.0
+    elif market_env.get("environment") == "caution":
+        _breadth_threshold_override = 68.0  # mild raise — caution != panic
     else:
         _breadth_threshold_override = None  # use reconciler adaptive threshold
 
@@ -360,22 +362,27 @@ def run_full_analysis(
     if _breadth_threshold_override is not None:
         min_composite_score = max(min_composite_score, _breadth_threshold_override)
 
-    # Determine risk environment
-    is_macro_risk_off = (macro_sentiment_score < 40)
+    # Determine risk environment — graduated, not binary
+    is_macro_risk_off = (macro_sentiment_score < 25)  # only extreme panic (<25), not mild negative news
     is_breadth_risk_off = (market_env.get("environment") == "risk_off")
+    is_macro_cautious = (macro_sentiment_score < 40)  # mild caution flag for warnings
     reasons_list = []
     if is_macro_risk_off:
-        reasons_list.append(f"Bearish macro sentiment ({macro_sentiment_score:.0f}/100)")
+        reasons_list.append(f"Extreme bearish macro sentiment ({macro_sentiment_score:.0f}/100)")
+    elif is_macro_cautious:
+        reasons_list.append(f"Cautious macro sentiment ({macro_sentiment_score:.0f}/100)")
     if is_breadth_risk_off:
         breadth_reasons = ", ".join(market_env.get("reasons", ["unknown"]))
         reasons_list.append(f"Market breadth risk-off ({breadth_reasons})")
 
-    # Group into priority tiers
-    if is_macro_risk_off or is_breadth_risk_off:
+    # Group into priority tiers — only dump ALL to fallback when BOTH gates fire simultaneously
+    if is_macro_risk_off and is_breadth_risk_off:
+        # TRUE panic: both extreme macro AND breadth risk-off → suppress everything
         priority_1 = []
         priority_2 = []
         priority_3 = list(scored)
     else:
+        # Normal or mildly cautious market — let stocks qualify on their own merit
         priority_1 = [s for s in scored if not s.get("is_blocked", False) and s.get("composite_score", 0) >= min_composite_score]
         priority_2 = [s for s in scored if not s.get("is_blocked", False) and s.get("composite_score", 0) < min_composite_score]
         priority_3 = [s for s in scored if s.get("is_blocked", False)]
@@ -539,6 +546,8 @@ def run_full_analysis(
                 reasons_warnings = []
                 if is_macro_risk_off or is_breadth_risk_off:
                     reasons_warnings.append("MARKET RISK-OFF")
+                elif is_macro_cautious:
+                    reasons_warnings.append("MARKET CAUTIOUS")
                 if item.get("is_blocked", False):
                     reasons_warnings.append(f"Blocked: {', '.join(item.get('block_reasons', []))}")
                 elif item.get("composite_score", 0.0) < min_composite_score:
@@ -940,7 +949,7 @@ def _analyze_symbol_swing(
 
     # R:R block check
     rr = atr_levels["risk_reward"] if atr_levels else 0.0
-    rr_blocked = (rr < 2.0)
+    rr_blocked = (rr < 1.5)  # lowered from 2.0 — was too aggressive
 
     # Compile blocks
     warnings = []
@@ -1220,7 +1229,7 @@ def _analyze_symbol_intraday(
 
     # R:R block check
     rr = atr_levels["risk_reward"] if atr_levels else 0.0
-    rr_blocked = (rr < 2.0)
+    rr_blocked = (rr < 1.5)  # lowered from 2.0 — was too aggressive
 
     # Compile blocks
     warnings = []
@@ -1504,7 +1513,7 @@ def _analyze_symbol_longterm(
 
     # R:R block check
     rr = atr_levels["risk_reward"] if atr_levels else 0.0
-    rr_blocked = (rr < 2.0)
+    rr_blocked = (rr < 1.5)  # lowered from 2.0 — was too aggressive
 
     # Compile blocks
     warnings = []

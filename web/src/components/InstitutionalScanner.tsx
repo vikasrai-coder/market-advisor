@@ -367,6 +367,30 @@ export default function InstitutionalScanner() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [filterVerdict, setFilterVerdict] = useState<"ALL" | "BUY" | "HOLD" | "SELL">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const pollingRef = useRef(false);
+
+  // Shared polling helper — polls a job_id until completed/failed
+  const pollJob = useCallback(async (jobId: string) => {
+    if (pollingRef.current) return; // Prevent duplicate polling
+    pollingRef.current = true;
+    try {
+      let completed = false;
+      while (!completed) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const job = await getInstitutionalScanStatus(jobId);
+        if (job.status === "completed" && job.result) {
+          setScanData(job.result);
+          completed = true;
+        } else if (job.status === "failed") {
+          throw new Error(job.error || "Scan failed");
+        } else if (job.message) {
+          setJobStatus(job.message);
+        }
+      }
+    } finally {
+      pollingRef.current = false;
+    }
+  }, []);
 
   // Load cached scan on mount
   useEffect(() => {
@@ -376,15 +400,21 @@ export default function InstitutionalScanner() {
         const response = await runInstitutionalScan(false);
         if (response.status === "success" && response.results) {
           setScanData(response);
+        } else if (response.status === "running" && response.job_id) {
+          // A job is already running (from another tab or background) — poll it
+          setJobStatus("Loading running scan...");
+          await pollJob(response.job_id);
         }
+        // "no_cache" → just show empty state, no error
       } catch (e) {
         console.error("[InstitutionalScanner] Failed to load cached scan:", e);
       } finally {
         setLoading(false);
+        setJobStatus(null);
       }
     };
     loadCachedScan();
-  }, []);
+  }, [pollJob]);
 
   const handleScan = useCallback(async () => {
     setLoading(true);
@@ -393,21 +423,8 @@ export default function InstitutionalScanner() {
     try {
       const response = await runInstitutionalScan(true);
       if (response.status === "running" && response.job_id) {
-        let completed = false;
-        const jobId = response.job_id;
-        while (!completed) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          const job = await getInstitutionalScanStatus(jobId);
-          if (job.status === "completed" && job.result) {
-            setScanData(job.result);
-            completed = true;
-          } else if (job.status === "failed") {
-            throw new Error(job.error || "Scan failed");
-          } else if (job.message) {
-            setJobStatus(job.message);
-          }
-        }
-      } else {
+        await pollJob(response.job_id);
+      } else if (response.status === "success" && response.results) {
         setScanData(response);
       }
     } catch (e) {
@@ -416,7 +433,7 @@ export default function InstitutionalScanner() {
       setLoading(false);
       setJobStatus(null);
     }
-  }, []);
+  }, [pollJob]);
 
   const handleSort = (key: typeof sortKey) => {
     if (key === sortKey) {

@@ -1,7 +1,8 @@
 import threading
 import uuid
 from typing import Any
-from app.services import institutional_scorer
+from app.services import alpha_scanner
+from app.services import alpha_tracker
 
 _jobs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
@@ -13,10 +14,19 @@ def _update(job_id: str, **fields: Any) -> None:
             _jobs[job_id].update(fields)
 
 
-def _run_job(job_id: str) -> None:
+def _run_job(job_id: str, thresholds: dict[str, Any] | None = None) -> None:
     try:
         # Run scan with force_refresh=True since this is a new background-triggered scan
-        result = institutional_scorer.run_institutional_scan(force_refresh=True)
+        result = alpha_scanner.scan_alpha_alerts(thresholds=thresholds, force_refresh=True)
+
+        # Record alerts for tracking
+        if result.get("alerts"):
+            alpha_tracker.record_alerts(result["alerts"])
+
+        # Record training data for all scanned symbols
+        if result.get("raw_features"):
+            alpha_tracker.record_training_data(result["raw_features"])
+
         _update(
             job_id,
             status="completed",
@@ -33,7 +43,7 @@ def _run_job(job_id: str) -> None:
         )
 
 
-def start_job() -> str:
+def start_job(thresholds: dict[str, Any] | None = None) -> str:
     existing = get_running_job()
     if existing:
         return existing["job_id"]
@@ -44,11 +54,11 @@ def start_job() -> str:
             "job_id": job_id,
             "status": "running",
             "progress": 0,
-            "message": "Initializing institutional scan...",
+            "message": "Initializing alpha alerts scan...",
             "result": None,
             "error": None,
         }
-    thread = threading.Thread(target=_run_job, args=(job_id,), daemon=True)
+    thread = threading.Thread(target=_run_job, args=(job_id, thresholds), daemon=True)
     thread.start()
     return job_id
 

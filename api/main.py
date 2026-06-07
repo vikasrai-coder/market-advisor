@@ -874,35 +874,78 @@ def admin_penny_scans():
 
 
 @app.get("/api/admin/alpha-alerts")
-def admin_alpha_alerts():
-    """Run the alpha scanner and return high-conviction same-day trade alerts.
+def admin_alpha_alerts(refresh: bool = False):
+    """Run/retrieve the alpha scanner.
 
-    Admin-only. Filters across all cap segments for 10%+ profit potential.
+    Returns cached scan results if fresh.
+    Otherwise, starts a background job and returns the job ID.
     """
     try:
-        from app.services.alpha_scanner import scan_alpha_alerts
-        from app.services.alpha_tracker import record_alerts, get_performance, record_training_data
+        from app.services.alpha_scanner import get_cached_alpha_scan
+        from app import alpha_jobs
 
-        # Use adaptive thresholds if available
+        # 1. Try loading from cache first
+        cached_result = get_cached_alpha_scan()
+        if cached_result and not refresh:
+            return {
+                "status": "success",
+                "message": f"Alpha alerts loaded from cache — {cached_result['passed']} alerts found.",
+                **cached_result,
+            }
+
+        # 2. Check for already running job
+        running_job = alpha_jobs.get_running_job()
+        if running_job:
+            return {
+                "status": "running",
+                "job_id": running_job["job_id"],
+                "message": "Alpha alerts scan is already running.",
+            }
+
+        # 3. If not refresh, check for recently completed job results
+        if not refresh:
+            last_completed = alpha_jobs.get_last_completed_job()
+            if last_completed and last_completed.get("result"):
+                return {
+                    "status": "success",
+                    "message": "Alpha alerts loaded from last completed job.",
+                    **last_completed["result"],
+                }
+            # No cache, no running job, no completed job — return empty/no_cache state so UI triggers a scan
+            return {
+                "status": "no_cache",
+                "message": "No cached alpha scan available.",
+                "alerts": [],
+                "scanned": 0,
+                "passed": 0,
+            }
+
+        # 4. Refresh requested -> start background job
+        from app.services.alpha_tracker import get_performance
         perf = get_performance()
         adaptive = perf.get("adaptive_thresholds", {})
         thresholds = {}
         if adaptive.get("min_composite"):
             thresholds["min_composite"] = adaptive["min_composite"]
 
-        result = scan_alpha_alerts(thresholds=thresholds or None)
-
-        # Record alerts for tracking
-        if result.get("alerts"):
-            record_alerts(result["alerts"])
-
-        # Record training data for all scanned symbols
-        if result.get("raw_features"):
-            record_training_data(result["raw_features"])
-
-        return result
+        job_id = alpha_jobs.start_job(thresholds=thresholds or None)
+        return {
+            "status": "running",
+            "job_id": job_id,
+            "message": "Alpha alerts scan started in the background.",
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/alpha-alerts/status/{job_id}")
+def admin_alpha_alerts_status(job_id: str):
+    """Retrieve the status and results of a background alpha alerts scan job."""
+    from app import alpha_jobs
+    job = alpha_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @app.get("/api/admin/alpha-performance")
@@ -1297,18 +1340,16 @@ def institutional_scan(refresh: bool = False):
         from app.services.institutional_scorer import get_cached_institutional_scan
         from app import institutional_jobs
         
-        # 1. If not forcing refresh, try loading from cache first
-        if not refresh:
-            cached_result = get_cached_institutional_scan()
-            if cached_result:
-                # Cache hit!
-                return {
-                    "status": "success",
-                    "message": f"Institutional scan loaded from cache — {cached_result['summary']['total_results']} stocks scored.",
-                    **cached_result,
-                }
+        # 1. Try loading from cache first (for both refresh and non-refresh)
+        cached_result = get_cached_institutional_scan()
+        if cached_result and not refresh:
+            return {
+                "status": "success",
+                "message": f"Institutional scan loaded from cache — {cached_result['summary']['total_results']} stocks scored.",
+                **cached_result,
+            }
 
-        # 2. Cache miss or refresh requested -> trigger background job
+        # 2. Check for already running job
         running_job = institutional_jobs.get_running_job()
         if running_job:
             return {
@@ -1317,6 +1358,24 @@ def institutional_scan(refresh: bool = False):
                 "message": "Institutional scan is already running.",
             }
 
+        # 3. If not refresh, check for recently completed job results first
+        if not refresh:
+            last_completed = institutional_jobs.get_last_completed_job()
+            if last_completed and last_completed.get("result"):
+                return {
+                    "status": "success",
+                    "message": "Institutional scan loaded from last completed job.",
+                    **last_completed["result"],
+                }
+            # No cache, no running job, no completed job — return empty
+            return {
+                "status": "no_cache",
+                "message": "No cached institutional scan available. Click 'Run Institutional Scan' to start one.",
+                "results": [],
+                "alerts": [],
+            }
+
+        # 4. Refresh requested → start a new background job
         job_id = institutional_jobs.start_job()
         return {
             "status": "running",

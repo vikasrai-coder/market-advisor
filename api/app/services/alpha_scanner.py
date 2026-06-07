@@ -8,9 +8,11 @@ This is an admin-only analytical tool. All outputs carry market risk.
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -19,6 +21,26 @@ import yfinance as yf
 from app.services import market_data, technicals
 from app.services.supabase_store import get_client
 from app.services.sector_rs import get_today_market_context, get_sector_relative_strength, _normalize_sector
+
+ALPHA_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "alpha_scan_cache.json")
+
+
+def get_cached_alpha_scan() -> dict[str, Any] | None:
+    """Retrieve the cached alpha scan results if fresh (within 30 mins)."""
+    if os.path.exists(ALPHA_CACHE_FILE):
+        try:
+            with open(ALPHA_CACHE_FILE, "r") as f:
+                cached = json.load(f)
+            gen_time_str = cached.get("generated_at")
+            if gen_time_str:
+                gen_time = datetime.fromisoformat(gen_time_str)
+                # Cache is fresh for 30 minutes
+                if datetime.now() - gen_time < timedelta(minutes=30):
+                    return cached
+        except Exception as e:
+            print(f"[AlphaScanner] Error reading cache: {e}")
+    return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +108,7 @@ def should_fire_alpha_alert(
 
 def scan_alpha_alerts(
     thresholds: dict[str, Any] | None = None,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Run the alpha scanner across all watchlist symbols.
 
@@ -96,7 +119,27 @@ def scan_alpha_alerts(
       - generated_at: ISO timestamp
       - thresholds: the filter thresholds used
     """
+    if not force_refresh:
+        cached = get_cached_alpha_scan()
+        if cached:
+            print("[AlphaScanner] Returning cached scan results.")
+            return cached
+
+    # Load learned adjustments from self-learning brain
+    try:
+        from app.services.loss_analyzer import load_learned_adjustments
+        learned = load_learned_adjustments()
+    except Exception:
+        learned = {}
+
     cfg = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+
+    # Apply learned composite override if applicable
+    if learned:
+        min_comp_override = learned.get("min_composite_score_override")
+        if min_comp_override:
+            cfg["min_composite"] = max(cfg["min_composite"], min_comp_override)
+
     symbols = market_data.get_watchlist()
 
     # Bulk download 5-day 60-min candles
@@ -215,12 +258,17 @@ def scan_alpha_alerts(
 
         # ENHANCEMENT #7 — Market/sector gate
         if passed_filter:
-            should_fire, suppression = should_fire_alpha_alert(
-                profile.get("sector"), composite, market_ctx
-            )
-            if not should_fire:
+            sector = profile.get("sector")
+            if learned and sector and sector in learned.get("suppressed_sectors", []):
                 passed_filter = False
-                raw_feat["suppression_reason"] = suppression
+                raw_feat["suppression_reason"] = f"Sector {sector} suppressed by self-learning brain"
+            else:
+                should_fire, suppression = should_fire_alpha_alert(
+                    sector, composite, market_ctx
+                )
+                if not should_fire:
+                    passed_filter = False
+                    raw_feat["suppression_reason"] = suppression
 
         if not passed_filter:
             return {"alert": None, "raw_features": raw_feat}
@@ -316,7 +364,7 @@ def scan_alpha_alerts(
     # Sort by composite score descending, then confidence
     alerts.sort(key=lambda a: (a["composite_score"], a["confidence"]), reverse=True)
 
-    return {
+    res_data = {
         "alerts": alerts,
         "raw_features": raw_features,
         "scanned": scanned,
@@ -324,4 +372,12 @@ def scan_alpha_alerts(
         "generated_at": datetime.now().isoformat(),
         "thresholds": cfg,
     }
+
+    try:
+        with open(ALPHA_CACHE_FILE, "w") as f:
+            json.dump(res_data, f, default=str)
+    except Exception as e:
+        print(f"[AlphaScanner] Error writing cache: {e}")
+
+    return res_data
 

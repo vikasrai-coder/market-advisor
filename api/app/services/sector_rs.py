@@ -236,7 +236,8 @@ def get_market_breadth_signal() -> dict[str, Any]:
 
         if len(risk_off_reasons) >= 2:
             environment = "risk_off"
-        elif len(risk_off_reasons) == 1 or nifty_price < nifty_sma20:
+        elif len(risk_off_reasons) == 1 or nifty_price < nifty_sma20 * 0.99:
+            # Require at least 1% below SMA20 for caution (was 0% = any amount)
             environment = "caution"
         else:
             environment = "risk_on"
