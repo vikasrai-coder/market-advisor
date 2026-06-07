@@ -18,6 +18,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Market Advisor — Indian Stock Picks (NSE)",
   description: "10 daily NSE buy recommendations via Yahoo Finance, Hugging Face AI, and Supabase",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
 };
 
 export default async function RootLayout({

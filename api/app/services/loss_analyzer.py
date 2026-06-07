@@ -65,10 +65,10 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
     except Exception as exc:
         return {"status": "db_error", "error": str(exc)}
 
-    if len(records) < 10:
+    if len(records) < 1:
         return {
             "status": "insufficient_data",
-            "min_required": 10,
+            "min_required": 1,
             "available": len(records),
         }
 
@@ -109,10 +109,10 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
 
     for sector, counts in sector_counts.items():
         total = counts["wins"] + counts["losses"]
-        if total >= 3:
+        if total >= 1:
             wr = counts["wins"] / total
             adjustments["sector_win_rates"][sector] = round(wr, 3)
-            if wr < 0.35 and total >= 5:
+            if wr < 0.35:
                 adjustments["suppressed_sectors"].append(sector)
 
     # --- Trade mode win rate analysis ---
@@ -124,25 +124,37 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
 
     for mode, counts in mode_counts.items():
         total = counts["wins"] + counts["losses"]
-        if total >= 3:
+        if total >= 1:
             wr = counts["wins"] / total
             adjustments["mode_win_rates"][mode] = round(wr, 3)
-            if wr < 0.35 and total >= 5:
+            if wr < 0.35:
                 adjustments["suppressed_trade_modes"].append(mode)
 
-    # --- Score range analysis: systemic quality check ---
-    high_score_losses = [r for r in losses if (r.get("composite_score") or 0) > 80]
-    high_score_wins = [r for r in wins if (r.get("composite_score") or 0) > 80]
-    hs_total = len(high_score_losses) + len(high_score_wins)
-
-    if hs_total >= 5:
-        hs_wr = len(high_score_wins) / hs_total
-        if hs_wr < 0.45:
-            adjustments["min_composite_score_override"] = 85
-            adjustments["systemic_warning"] = (
-                f"Even composite >80 signals have {round(hs_wr * 100)}% win rate. "
-                "Systemic issue detected — minimum threshold raised to 85."
-            )
+    # Auto-floats threshold base score based on overall 30-day win rate (floats base score between 70 and 85)
+    if total_win_rate < 0.35:
+        adjustments["min_composite_score_override"] = 85
+        adjustments["systemic_warning"] = (
+            f"Overall 30d win rate is extremely low ({total_win_rate * 100:.1f}%). "
+            "Threshold raised to 85."
+        )
+    elif total_win_rate < 0.50:
+        adjustments["min_composite_score_override"] = 80
+        adjustments["systemic_warning"] = (
+            f"Overall 30d win rate is cautionary ({total_win_rate * 100:.1f}%). "
+            "Threshold raised to 80."
+        )
+    elif total_win_rate < 0.65:
+        adjustments["min_composite_score_override"] = 75
+        adjustments["systemic_warning"] = (
+            f"Overall 30d win rate is normal ({total_win_rate * 100:.1f}%). "
+            "Threshold set to 75."
+        )
+    else:
+        adjustments["min_composite_score_override"] = 70
+        adjustments["systemic_warning"] = (
+            f"Overall 30d win rate is excellent ({total_win_rate * 100:.1f}%). "
+            "Threshold lowered to 70."
+        )
 
     # Write to config
     _ensure_config_dir()

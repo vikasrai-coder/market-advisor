@@ -243,10 +243,19 @@ def scan_alpha_alerts(
             "generated_at": datetime.now().isoformat(),
         }
 
+        # Apply sector learning penalty of 25 to the composite score if the sector is suppressed by the self-learning brain
+        sector_penalty = 0
+        if learned:
+            sector = profile.get("sector")
+            if sector and sector in learned.get("suppressed_sectors", []):
+                sector_penalty = 25
+                composite = max(0.0, composite - sector_penalty)
+
         # --- Apply strict filters ---
         passed_filter = True
         if composite < cfg["min_composite"]:
             passed_filter = False
+            raw_feat["suppression_reason"] = f"Composite score {composite} (after sector penalty -{sector_penalty}) below {cfg['min_composite']}"
         elif rsi is not None and (rsi < cfg["min_rsi"] or rsi > cfg["max_rsi"]):
             passed_filter = False
         elif cfg["min_volume_spike"] > 1.0 and vol_ratio < cfg["min_volume_spike"]:
@@ -259,16 +268,12 @@ def scan_alpha_alerts(
         # ENHANCEMENT #7 — Market/sector gate
         if passed_filter:
             sector = profile.get("sector")
-            if learned and sector and sector in learned.get("suppressed_sectors", []):
+            should_fire, suppression = should_fire_alpha_alert(
+                sector, composite, market_ctx
+            )
+            if not should_fire:
                 passed_filter = False
-                raw_feat["suppression_reason"] = f"Sector {sector} suppressed by self-learning brain"
-            else:
-                should_fire, suppression = should_fire_alpha_alert(
-                    sector, composite, market_ctx
-                )
-                if not should_fire:
-                    passed_filter = False
-                    raw_feat["suppression_reason"] = suppression
+                raw_feat["suppression_reason"] = suppression
 
         if not passed_filter:
             return {"alert": None, "raw_features": raw_feat}
