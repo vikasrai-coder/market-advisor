@@ -164,6 +164,21 @@ def analyze_loss_patterns(supabase_client: Any) -> dict[str, Any]:
     except Exception as exc:
         adjustments["write_error"] = str(exc)
 
+    # Persist learning snapshot to Supabase for historical trend tracking
+    try:
+        supabase_client.table("learning_history").insert({
+            "overall_win_rate": adjustments.get("overall_win_rate"),
+            "sample_size": adjustments.get("sample_size"),
+            "min_composite_override": adjustments.get("min_composite_score_override"),
+            "suppressed_sectors": adjustments.get("suppressed_sectors", []),
+            "suppressed_modes": adjustments.get("suppressed_trade_modes", []),
+            "sector_win_rates": adjustments.get("sector_win_rates", {}),
+            "mode_win_rates": adjustments.get("mode_win_rates", {}),
+            "systemic_warning": adjustments.get("systemic_warning"),
+        }).execute()
+    except Exception:
+        pass  # Non-critical — don't fail the learning run if history write fails
+
     return adjustments
 
 

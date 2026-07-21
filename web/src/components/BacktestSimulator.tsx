@@ -45,7 +45,7 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
 
         if (runsError) throw runsError;
 
-        if (runs) {
+        if (runs && runs.length > 0) {
           const formattedHistory: SavedRun[] = runs.map(run => ({
             id: run.id,
             timestamp: new Date(run.created_at).toLocaleString("en-IN"),
@@ -66,14 +66,33 @@ export default function BacktestSimulator({ currentMode }: BacktestSimulatorProp
           }));
 
           setHistory(formattedHistory);
-
-          // Auto-load details for the most recent run
-          if (formattedHistory.length > 0) {
-            handleSelectRun(formattedHistory[0]);
+        } else {
+          // Fallback to backend API
+          const { getBacktestHistory } = await import("../lib/api");
+          const apiRes = await getBacktestHistory(10);
+          if (apiRes.history && apiRes.history.length > 0) {
+            setHistory(apiRes.history.map(run => ({
+              id: run.id,
+              timestamp: new Date(run.created_at).toLocaleString("en-IN"),
+              mode: run.mode,
+              startDate: run.start_date,
+              duration: run.check_days,
+              winRate: run.win_rate,
+              metrics: {
+                win_rate: run.win_rate,
+                avg_return: run.avg_return_pct,
+                total_picks: run.total_picks,
+                target_hits: run.target_hits,
+                stop_hits: run.stopped_outs,
+                held: 0,
+                index_return: 0,
+                outperformance: 0
+              }
+            })));
           }
         }
       } catch (err) {
-        console.error("Failed to load backtest history from Supabase:", err);
+        console.error("Failed to load backtest history:", err);
       }
     }
     fetchHistory();

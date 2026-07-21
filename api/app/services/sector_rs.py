@@ -281,3 +281,48 @@ def get_today_market_context() -> dict[str, Any]:
     """Convenience wrapper — always returns today's cached market context."""
     today_key = date.today().isoformat()
     return get_cached_market_context(today_key)
+
+
+def get_sector_rotation_report() -> dict[str, Any]:
+    """Compile a sector rotation report classifying sectors into rotating_in, leading, rotating_out, lagging."""
+    context = get_today_market_context()
+    sector_map = context.get("sectors", {})
+    breadth = context.get("breadth", {})
+
+    rotating_in = []
+    leading = []
+    rotating_out = []
+    lagging = []
+
+    for name, data in sector_map.items():
+        rs_score = float(data.get("rs_score") or 50.0)
+        ret_5d = float(data.get("sector_5d_return") or 0.0)
+        ret_20d = float(data.get("sector_20d_return") or 0.0)
+
+        sector_item = {
+            "sector": name,
+            "rs_score": rs_score,
+            "5d_return": round(ret_5d, 2),
+            "20d_return": round(ret_20d, 2),
+            "status": data.get("status", "neutral"),
+        }
+
+        if rs_score >= 60:
+            leading.append(sector_item)
+        elif ret_5d > 1.5 and rs_score >= 45:
+            rotating_in.append(sector_item)
+        elif ret_5d < -1.5 or rs_score < 40:
+            rotating_out.append(sector_item)
+        else:
+            lagging.append(sector_item)
+
+    return {
+        "generated_at": datetime.now().isoformat(),
+        "market_environment": breadth.get("environment", "risk_on"),
+        "vix": breadth.get("vix", 15.0),
+        "leading": leading,
+        "rotating_in": rotating_in,
+        "rotating_out": rotating_out,
+        "lagging": lagging,
+    }
+

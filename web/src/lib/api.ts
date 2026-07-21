@@ -759,3 +759,201 @@ export async function scoreInstitutionalStock(symbol: string) {
     body: JSON.stringify({ symbol }),
   });
 }
+
+// ── Dashboard KPI ──────────────────────────────────────────────────────
+
+export type KPIData = {
+  recommendations_count: number;
+  yesterday_count: number;
+  delta_pct: number;
+  avg_composite_score: number;
+  signals_loaded: number;
+  system_win_rate: number | null;
+  active_threshold: number;
+  systemic_warning: string | null;
+};
+
+export async function getDashboardKPI() {
+  return fetchJson<KPIData>("/api/dashboard/kpi");
+}
+
+// ── Learning System ────────────────────────────────────────────────────
+
+export type LearningHistoryEntry = {
+  id: string;
+  overall_win_rate: number | null;
+  sample_size: number;
+  min_composite_override: number | null;
+  suppressed_sectors: string[];
+  suppressed_modes: string[];
+  sector_win_rates: Record<string, number>;
+  mode_win_rates: Record<string, number>;
+  systemic_warning: string | null;
+  generated_at: string;
+};
+
+export type LearningReport = {
+  current_state: {
+    generated_at?: string;
+    overall_win_rate?: number;
+    sample_size?: number;
+    min_composite_score_override?: number;
+    suppressed_sectors?: string[];
+    suppressed_trade_modes?: string[];
+    sector_win_rates?: Record<string, number>;
+    mode_win_rates?: Record<string, number>;
+    systemic_warning?: string;
+  };
+  history: LearningHistoryEntry[];
+};
+
+export async function getLearningReport() {
+  return fetchJson<LearningReport>("/api/admin/learning-report");
+}
+
+export async function triggerLearning() {
+  return fetchJson<{ status: string; message: string; result: Record<string, unknown> }>(
+    "/api/admin/learning-trigger",
+    { method: "POST" }
+  );
+}
+
+// ── User Accuracy & Rebalance ──────────────────────────────────────────
+
+export type UserAccuracyStats = {
+  total_trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  total_pnl: number;
+  best_trade: { symbol: string | null; pnl: number } | null;
+  worst_trade: { symbol: string | null; pnl: number } | null;
+  system_win_rate: number | null;
+};
+
+export type ReplacementPick = {
+  symbol: string;
+  display_symbol: string;
+  composite_score: number;
+  target_price: number;
+  stop_loss: number;
+  reasoning: string;
+};
+
+export type RebalanceItem = {
+  symbol: string;
+  display_symbol: string;
+  shares: number;
+  buy_price: number;
+  current_price: number;
+  current_value: number;
+  pnl: number;
+  pnl_pct: number;
+  health: "healthy" | "caution" | "exit_now";
+  warnings: string[];
+  replacement_picks: ReplacementPick[];
+};
+
+export type RebalanceSuggestions = {
+  user_id: string;
+  total_holdings: number;
+  unhealthy_count: number;
+  items: RebalanceItem[];
+};
+
+export async function getUserAccuracyStats(userId: string) {
+  return fetchJson<UserAccuracyStats>(`/api/user/accuracy?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function getRebalanceSuggestions(userId: string) {
+  return fetchJson<RebalanceSuggestions>(`/api/user/portfolio/rebalance-suggestions?user_id=${encodeURIComponent(userId)}`);
+}
+
+// ── Backtest History & Sector Rotation ─────────────────────────────────
+
+export type BacktestHistoryRun = {
+  id: string;
+  mode: TradeMode;
+  start_date: string;
+  check_days: number;
+  total_picks: number;
+  target_hits: number;
+  stopped_outs: number;
+  win_rate: number;
+  avg_return_pct: number;
+  created_at: string;
+};
+
+export type SectorRotationItem = {
+  sector: string;
+  rs_score: number;
+  "5d_return": number;
+  "20d_return": number;
+  status: string;
+};
+
+export type SectorRotationReport = {
+  generated_at: string;
+  market_environment: string;
+  vix: number;
+  leading: SectorRotationItem[];
+  rotating_in: SectorRotationItem[];
+  rotating_out: SectorRotationItem[];
+  lagging: SectorRotationItem[];
+};
+
+export async function getBacktestHistory(limit = 20) {
+  return fetchJson<{ history: BacktestHistoryRun[] }>(`/api/backtest/history?limit=${limit}`);
+}
+
+export async function getSectorRotationReport() {
+  return fetchJson<SectorRotationReport>("/api/market/sector-rotation");
+}
+
+// ── Notifications & Event Calendar ────────────────────────────────────
+
+export type UserNotificationPreferences = {
+  user_id: string;
+  telegram_chat_id: string | null;
+  notify_target_hit: boolean;
+  notify_stopped_out: boolean;
+  notify_bearish_warning: boolean;
+  notify_new_signal: boolean;
+  notify_modes: string[];
+};
+
+export type EventCalendarItem = {
+  date: string;
+  type: string;
+  title: string;
+  risk: string;
+};
+
+export type EventCalendarResponse = {
+  days_ahead: number;
+  items: EventCalendarItem[];
+  holiday_count: number;
+};
+
+export async function getUserNotificationPreferences(userId: string) {
+  return fetchJson<UserNotificationPreferences>(`/api/user/notification-preferences?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function saveUserNotificationPreferences(prefs: UserNotificationPreferences) {
+  return fetchJson<{ success: boolean; preferences: UserNotificationPreferences }>(
+    "/api/user/notification-preferences",
+    {
+      method: "POST",
+      body: JSON.stringify(prefs),
+    }
+  );
+}
+
+export async function getEventCalendar(daysAhead = 14) {
+  return fetchJson<EventCalendarResponse>(`/api/market/event-calendar?days_ahead=${daysAhead}`);
+}
+
+
+
+
+

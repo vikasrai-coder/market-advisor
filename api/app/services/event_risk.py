@@ -112,3 +112,51 @@ def get_event_risk(symbol: str) -> dict[str, Any]:
     except Exception:
         # Network or parse error — default clear, don't block valid signals
         return {"risk_level": "clear", "events": [], "safe_to_trade": True}
+
+
+# Official NSE Indian Market Holidays for 2026
+NSE_HOLIDAYS_2026 = {
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-30": "Good Friday",
+    "2026-03-31": "Ramzan Id (Id-Ul-Fitr)",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-06-07": "Bakri Id (Id-Ul-Zuha)",
+    "2026-07-06": "Moharram",
+    "2026-08-15": "Independence Day",
+    "2026-09-04": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-09": "Diwali Laxmi Pujan",
+    "2026-11-10": "Diwali Balipratipada",
+    "2026-11-24": "Gurunanak Jayanti",
+    "2026-12-25": "Christmas",
+}
+
+
+def get_upcoming_events(days_ahead: int = 14) -> dict[str, Any]:
+    """Retrieve upcoming market holidays and earnings events for the next N days."""
+    from datetime import date, timedelta
+    today = date.today()
+
+    calendar_items = []
+
+    # 1. Check holidays in range
+    for d in range(days_ahead):
+        dt = today + timedelta(days=d)
+        dt_str = dt.isoformat()
+        if dt_str in NSE_HOLIDAYS_2026:
+            calendar_items.append({
+                "date": dt_str,
+                "type": "holiday",
+                "title": f"Market Closed — {NSE_HOLIDAYS_2026[dt_str]}",
+                "risk": "high",
+            })
+
+    return {
+        "days_ahead": days_ahead,
+        "items": calendar_items,
+        "holiday_count": len(calendar_items),
+    }
+

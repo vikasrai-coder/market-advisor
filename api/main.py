@@ -39,6 +39,14 @@ def is_indian_market_hours() -> bool:
     # Weekdays: Mon=0 to Fri=4
     if now_ist.weekday() > 4:
         return False
+
+    # Check NSE Market Holidays
+    try:
+        from app.services.event_risk import NSE_HOLIDAYS_2026
+        if now_ist.strftime("%Y-%m-%d") in NSE_HOLIDAYS_2026:
+            return False
+    except Exception:
+        pass
         
     # 9:15 AM to 3:30 PM
     minutes = now_ist.hour * 60 + now_ist.minute
@@ -301,6 +309,26 @@ def simulate_backtest(req: BacktestRequest):
             check_days=req.check_days,
         )
         return res
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/backtest/history")
+def backtest_history_endpoint(limit: int = 20):
+    """Return past backtest simulation runs from Supabase."""
+    try:
+        from app.services.backtester import get_backtest_history
+        return {"history": get_backtest_history(limit)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/market/sector-rotation")
+def sector_rotation_endpoint():
+    """Return sector rotation report classifying sectors into leading, rotating_in, rotating_out, lagging."""
+    try:
+        from app.services.sector_rs import get_sector_rotation_report
+        return get_sector_rotation_report()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -1005,6 +1033,141 @@ def telegram_test_endpoint():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/dashboard/kpi")
+def dashboard_kpi():
+    """Return real-time KPI data for the dashboard cards."""
+    from datetime import date, timedelta
+
+    client = get_client()
+    today_str = date.today().isoformat()
+    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+
+    recs_today = 0
+    recs_yesterday = 0
+    avg_score = 0.0
+    signals_today = 0
+    system_win_rate = None
+    active_threshold = 70
+    systemic_warning = None
+
+    if client:
+        try:
+            # Today's recommendations
+            today_res = (
+                client.table("recommendations")
+                .select("composite_score")
+                .eq("trade_date", today_str)
+                .execute()
+            )
+            today_data = today_res.data or []
+            recs_today = len(today_data)
+            if today_data:
+                scores = [float(r.get("composite_score", 0)) for r in today_data if r.get("composite_score")]
+                avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+            # Yesterday's recommendations (for delta %)
+            yest_res = (
+                client.table("recommendations")
+                .select("id")
+                .eq("trade_date", yesterday_str)
+                .execute()
+            )
+            recs_yesterday = len(yest_res.data or [])
+
+            # Today's signals
+            sig_res = (
+                client.table("trading_signals")
+                .select("id")
+                .eq("planned_trade_date", today_str)
+                .execute()
+            )
+            signals_today = len(sig_res.data or [])
+        except Exception:
+            pass
+
+    # Load learning brain state
+    try:
+        from app.services.loss_analyzer import load_learned_adjustments
+        learned = load_learned_adjustments()
+        if learned:
+            system_win_rate = learned.get("overall_win_rate")
+            active_threshold = learned.get("min_composite_score_override", 70)
+            systemic_warning = learned.get("systemic_warning")
+    except Exception:
+        pass
+
+    delta_pct = 0.0
+    if recs_yesterday > 0:
+        delta_pct = round(((recs_today - recs_yesterday) / recs_yesterday) * 100, 1)
+
+    return {
+        "recommendations_count": recs_today,
+        "yesterday_count": recs_yesterday,
+        "delta_pct": delta_pct,
+        "avg_composite_score": avg_score,
+        "signals_loaded": signals_today,
+        "system_win_rate": system_win_rate,
+        "active_threshold": active_threshold,
+        "systemic_warning": systemic_warning,
+    }
+
+
+@app.get("/api/admin/learning-report")
+def learning_report():
+    """Return full self-learning brain state + learning history timeline."""
+    import json as _json
+
+    # Current brain state from config file
+    current_state = {}
+    try:
+        from app.services.loss_analyzer import load_learned_adjustments, LEARNING_CONFIG_PATH
+        import os
+        if os.path.exists(LEARNING_CONFIG_PATH):
+            with open(LEARNING_CONFIG_PATH) as f:
+                current_state = _json.load(f)
+        else:
+            current_state = load_learned_adjustments()
+    except Exception:
+        pass
+
+    # Learning history timeline from Supabase
+    history = []
+    client = get_client()
+    if client:
+        try:
+            res = (
+                client.table("learning_history")
+                .select("*")
+                .order("generated_at", desc=True)
+                .limit(50)
+                .execute()
+            )
+            history = res.data or []
+        except Exception:
+            pass
+
+    return {
+        "current_state": current_state,
+        "history": history,
+    }
+
+
+@app.post("/api/admin/learning-trigger")
+def learning_trigger():
+    """Manually trigger the self-learning brain (instead of waiting for Sunday cron)."""
+    client = get_client()
+    if not client:
+        raise HTTPException(status_code=400, detail="Supabase client not active")
+
+    from app.services.loss_analyzer import analyze_loss_patterns
+    result = analyze_loss_patterns(client)
+    return {
+        "status": "success",
+        "message": "Self-learning brain re-analyzed successfully",
+        "result": result,
+    }
+
+
 @app.post("/api/cron/weekly-learning")
 def weekly_learning(
     authorization: str | None = Header(None),
@@ -1258,6 +1421,83 @@ def reconcile_portfolio_endpoint(user_id: str):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+
+
+@app.get("/api/user/accuracy")
+def user_accuracy_endpoint(user_id: str):
+    """Return user's personal trading accuracy stats vs system win rate."""
+    try:
+        from app.services.user_workspace import get_user_accuracy_stats
+        return get_user_accuracy_stats(user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/user/notification-preferences")
+def get_user_notification_preferences_endpoint(user_id: str):
+    """Get user's personal notification preferences from Supabase."""
+    client = get_client()
+    if not client:
+        return {"user_id": user_id, "telegram_chat_id": None, "notify_target_hit": True, "notify_stopped_out": True, "notify_bearish_warning": True, "notify_new_signal": False, "notify_modes": ["swing", "intraday"]}
+    try:
+        res = client.table("user_notification_preferences").select("*").eq("user_id", user_id).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        return {"user_id": user_id, "telegram_chat_id": None, "notify_target_hit": True, "notify_stopped_out": True, "notify_bearish_warning": True, "notify_new_signal": False, "notify_modes": ["swing", "intraday"]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class NotificationPreferencesRequest(BaseModel):
+    user_id: str
+    telegram_chat_id: str | None = None
+    notify_target_hit: bool = True
+    notify_stopped_out: bool = True
+    notify_bearish_warning: bool = True
+    notify_new_signal: bool = False
+    notify_modes: list[str] = ["swing", "intraday"]
+
+
+@app.post("/api/user/notification-preferences")
+def save_user_notification_preferences_endpoint(req: NotificationPreferencesRequest):
+    """Save user's personal notification preferences to Supabase."""
+    client = get_client()
+    if not client:
+        raise HTTPException(status_code=400, detail="Supabase client not active")
+    try:
+        data = {
+            "user_id": req.user_id,
+            "telegram_chat_id": req.telegram_chat_id,
+            "notify_target_hit": req.notify_target_hit,
+            "notify_stopped_out": req.notify_stopped_out,
+            "notify_bearish_warning": req.notify_bearish_warning,
+            "notify_new_signal": req.notify_new_signal,
+            "notify_modes": req.notify_modes,
+        }
+        client.table("user_notification_preferences").upsert(data).execute()
+        return {"success": True, "preferences": data}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/market/event-calendar")
+def event_calendar_endpoint(days_ahead: int = 14):
+    """Return upcoming market holidays and risk events for next N days."""
+    try:
+        from app.services.event_risk import get_upcoming_events
+        return get_upcoming_events(days_ahead)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/user/portfolio/rebalance-suggestions")
+def portfolio_rebalance_suggestions_endpoint(user_id: str):
+    """Scan user holdings for deteriorating positions and suggest high-conviction replacements."""
+    try:
+        from app.services.position_monitor import get_portfolio_rebalance_suggestions
+        return get_portfolio_rebalance_suggestions(user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/analysis/run")

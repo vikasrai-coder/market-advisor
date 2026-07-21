@@ -10,12 +10,16 @@ import {
   getUserPassbook,
   reconcilePortfolioTriggers,
   updatePortfolioThresholds,
+  getUserAccuracyStats,
+  getRebalanceSuggestions,
   UserWatchlistItem,
   UserPortfolioResponse,
   PassbookItem,
+  UserAccuracyStats,
+  RebalanceSuggestions,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
-import { Modal, InputNumber, Button, ConfigProvider, theme } from "antd";
+import { Modal, InputNumber, Button, ConfigProvider, theme, Tag, Tooltip } from "antd";
 
 interface UserWorkspaceProps {
   userId?: string;
@@ -56,8 +60,10 @@ export default function UserWorkspace({
   const [sessionUserId, setSessionUserId] = useState<string>("");
   const [watchlist, setWatchlist] = useState<UserWatchlistItem[]>([]);
   const [portfolio, setPortfolio] = useState<UserPortfolioResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"holdings" | "passbook">("holdings");
+  const [activeTab, setActiveTab] = useState<"holdings" | "passbook" | "rebalance">("holdings");
   const [passbook, setPassbook] = useState<PassbookItem[]>([]);
+  const [accuracy, setAccuracy] = useState<UserAccuracyStats | null>(null);
+  const [rebalanceData, setRebalanceData] = useState<RebalanceSuggestions | null>(null);
   
   // Watchlist Input
   const [newSymbol, setNewSymbol] = useState<string>("");
@@ -113,14 +119,18 @@ export default function UserWorkspace({
         console.error("Auto-reconcile triggers failed:", recErr);
       }
 
-      const [watchData, portData, passbookData] = await Promise.all([
+      const [watchData, portData, passbookData, accuracyData, rebalanceRes] = await Promise.all([
         getUserWatchlist(effectiveUserId),
         getUserPortfolio(effectiveUserId),
         getUserPassbook(effectiveUserId),
+        getUserAccuracyStats(effectiveUserId).catch(() => null),
+        getRebalanceSuggestions(effectiveUserId).catch(() => null),
       ]);
       setWatchlist(watchData.watchlist ?? []);
       setPortfolio(portData);
       setPassbook(passbookData.passbook ?? []);
+      if (accuracyData) setAccuracy(accuracyData);
+      if (rebalanceRes) setRebalanceData(rebalanceRes);
       setApiConnected(true);
     } catch (err) {
       setApiConnected(false);
@@ -432,6 +442,27 @@ export default function UserWorkspace({
             </div>
           </div>
 
+          {/* User Accuracy vs System Card */}
+          {accuracy && accuracy.total_trades > 0 && (
+            <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-4 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <span className="font-bold text-cyan-300 uppercase tracking-wider text-[11px]">🎯 My Accuracy vs System</span>
+                  <div className="flex items-center gap-4 mt-1">
+                    <span>Win Rate: <strong className="text-white text-sm">{(accuracy.win_rate! * 100).toFixed(1)}%</strong> ({accuracy.wins}W / {accuracy.losses}L)</span>
+                    <span>Closed P&L: <strong className={accuracy.total_pnl >= 0 ? "text-emerald-400 text-sm" : "text-rose-400 text-sm"}>₹{accuracy.total_pnl.toLocaleString("en-IN")}</strong></span>
+                  </div>
+                </div>
+                {accuracy.system_win_rate !== null && (
+                  <div className="text-right">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block">System Benchmark</span>
+                    <span className="font-bold text-slate-200">{(accuracy.system_win_rate * 100).toFixed(1)}% win rate</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Tab Selection */}
           <div className="flex gap-2 mb-6 border-b border-slate-900 pb-2">
             <button
@@ -453,6 +484,16 @@ export default function UserWorkspace({
               }`}
             >
               📖 Transaction Passbook ({passbook.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("rebalance")}
+              className={`pb-2 px-4 text-xs font-black uppercase tracking-wider transition-all relative cursor-pointer ${
+                activeTab === "rebalance"
+                  ? "text-amber-400 border-b-2 border-amber-500"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              🔄 Rebalance ({rebalanceData?.unhealthy_count ?? 0} Flagged)
             </button>
           </div>
 
@@ -547,7 +588,7 @@ export default function UserWorkspace({
                 </tbody>
               </table>
             </div>
-          ) : (
+          ) : activeTab === "passbook" ? (
             /* Passbook History table */
             <div className="border border-slate-900 rounded-2xl overflow-hidden mb-6 bg-slate-900/5 shadow-inner max-h-[300px] overflow-y-auto">
               <table className="w-full text-left border-collapse">
@@ -615,6 +656,67 @@ export default function UserWorkspace({
                   )}
                 </tbody>
               </table>
+            </div>
+          ) : (
+            /* Rebalance tab view */
+            <div className="space-y-4 mb-6 max-h-[400px] overflow-y-auto pr-1">
+              {!rebalanceData?.items || rebalanceData.items.length === 0 ? (
+                <div className="text-center py-10 text-slate-500">
+                  No holdings recorded to evaluate for rebalancing.
+                </div>
+              ) : (
+                rebalanceData.items.map((item) => (
+                  <div
+                    key={item.symbol}
+                    className={`p-4 rounded-2xl border ${
+                      item.health === "exit_now"
+                        ? "border-red-500/30 bg-red-950/20"
+                        : item.health === "caution"
+                          ? "border-amber-500/30 bg-amber-950/20"
+                          : "border-slate-800 bg-slate-900/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <span className="font-bold text-white text-sm">{item.display_symbol}</span>
+                        <span className="text-xs text-slate-400 ml-2">
+                          P&L: <strong className={item.pnl_pct >= 0 ? "text-emerald-400" : "text-rose-400"}>{item.pnl_pct > 0 ? "+" : ""}{item.pnl_pct}%</strong>
+                        </span>
+                      </div>
+                      <Tag color={item.health === "exit_now" ? "red" : item.health === "caution" ? "orange" : "green"}>
+                        {item.health === "exit_now" ? "EXIT RECOMMENDED" : item.health === "caution" ? "MONITOR CLOSELY" : "HEALTHY"}
+                      </Tag>
+                    </div>
+
+                    {item.warnings.length > 0 && (
+                      <ul className="text-xs text-red-300 space-y-0.5 mb-3">
+                        {item.warnings.map((w, idx) => (
+                          <li key={idx}>⚠️ {w}</li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {item.replacement_picks.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-800">
+                        <p className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider mb-2">
+                          💡 Suggested High-Conviction Replacements:
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {item.replacement_picks.map((pick) => (
+                            <div key={pick.symbol} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                              <div className="flex justify-between font-bold text-slate-200">
+                                <span>{pick.display_symbol}</span>
+                                <span className="text-emerald-400">Score: {pick.composite_score}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 line-clamp-1 mt-1">{pick.reasoning}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>

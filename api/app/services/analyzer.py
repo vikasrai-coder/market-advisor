@@ -606,6 +606,24 @@ def run_full_analysis(
                     "is_undervalued": is_undervalued,
                 },
                 "sentiment_gate": sentiment_gate_status,
+                "confidence_breakdown": {
+                    "trend_alignment": {
+                        "score": min(100, int(item["metrics"].get("trend_score") or 50)),
+                        "reason": f"Trend strength rating: {item['metrics'].get('trend_score', 50):.0f}/100"
+                    },
+                    "technical_conviction": {
+                        "score": min(100, int(item["metrics"].get("technical_score") or 50)),
+                        "reason": f"Technical indicator confluence: {item['metrics'].get('technical_score', 50):.0f}/100"
+                    },
+                    "news_sentiment": {
+                        "score": min(100, int(item.get("news_score", 50))),
+                        "reason": f"News & macro sentiment rating: {item.get('news_score', 50):.0f}/100"
+                    },
+                    "brain_approval": {
+                        "score": 100 if item["composite_score"] >= min_composite_score else 0,
+                        "reason": f"Composite score {item['composite_score']:.0f} vs self-learning requirement ({min_composite_score:.0f})"
+                    }
+                },
             }
             recommendations.append(rec)
             signals.append(

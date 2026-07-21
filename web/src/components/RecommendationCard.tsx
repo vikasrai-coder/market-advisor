@@ -11,6 +11,67 @@ interface RecommendationCardProps {
   userId?: string;
 }
 
+// ── Confidence Tier Logic ────────────────────────────────────────────────
+
+type ConfidenceTier = "S" | "A" | "B" | "C";
+
+function getConfidenceTier(score: number): ConfidenceTier {
+  if (score >= 90) return "S";
+  if (score >= 80) return "A";
+  if (score >= 70) return "B";
+  return "C";
+}
+
+const TIER_CONFIG: Record<
+  ConfidenceTier,
+  {
+    label: string;
+    icon: string;
+    bgClass: string;
+    textClass: string;
+    borderClass: string;
+    glowClass: string;
+  }
+> = {
+  S: {
+    label: "S-TIER",
+    icon: "⚡",
+    bgClass: "bg-gradient-to-r from-amber-500/20 to-yellow-500/20",
+    textClass: "text-amber-300",
+    borderClass: "border-amber-400/40",
+    glowClass: "shadow-[0_0_12px_rgba(245,158,11,0.25)] animate-pulse",
+  },
+  A: {
+    label: "A-TIER",
+    icon: "✓",
+    bgClass: "bg-emerald-500/15",
+    textClass: "text-emerald-300",
+    borderClass: "border-emerald-500/30",
+    glowClass: "",
+  },
+  B: {
+    label: "B-TIER",
+    icon: "⚠",
+    bgClass: "bg-amber-500/10",
+    textClass: "text-amber-400",
+    borderClass: "border-amber-500/25",
+    glowClass: "",
+  },
+  C: {
+    label: "C-TIER",
+    icon: "✕",
+    bgClass: "bg-red-500/10",
+    textClass: "text-red-400",
+    borderClass: "border-red-500/25",
+    glowClass: "",
+  },
+};
+
+// Self-learning brain default threshold (updated by API if available)
+const BRAIN_THRESHOLD = 85;
+
+// ── Component ────────────────────────────────────────────────────────────
+
 export function RecommendationCard({ rec, userId: propUserId }: RecommendationCardProps) {
   const stock = rec.stocks;
   const mode = rec.trade_mode || "swing";
@@ -18,6 +79,7 @@ export function RecommendationCard({ rec, userId: propUserId }: RecommendationCa
   const [modalOpen, setModalOpen] = useState(false);
   const [livePrice, setLivePrice] = useState<number>(0);
   const [userId, setUserId] = useState<string>("test-trader-1");
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
   useEffect(() => {
     if (propUserId) {
@@ -53,6 +115,11 @@ export function RecommendationCard({ rec, userId: propUserId }: RecommendationCa
       setLivePrice(100.0);
     }
   };
+
+  // Confidence tier
+  const tier = getConfidenceTier(rec.composite_score);
+  const tierCfg = TIER_CONFIG[tier];
+  const isBrainApproved = rec.composite_score >= BRAIN_THRESHOLD;
 
   // Accent styles per mode
   const getAccentStyles = () => {
@@ -91,24 +158,28 @@ export function RecommendationCard({ rec, userId: propUserId }: RecommendationCa
     <>
       <Link
         href={`/stocks/${rec.symbol}`}
-        className={`group block rounded-xl border border-slate-700/80 bg-slate-900/60 p-5 transition ${style.borderHover}`}
+        className={`group block rounded-xl border border-slate-700/80 bg-slate-900/60 p-5 transition ${style.borderHover} ${tier === "C" ? "opacity-60" : ""}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${style.badgeBg}`}>
-              #{rec.rank} {mode === "intraday" ? "⚡ Intraday" : mode === "longterm" ? "🏦 Long-term" : mode === "future" ? "📅 Future Setup" : "📈 Swing BUY"}
-            </span>
-            {rec.cap_segment && (
-              <span className="ml-1.5 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 capitalize">
-                {rec.cap_segment}
+            {/* Mode badge + cap segment */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${style.badgeBg}`}>
+                #{rec.rank} {mode === "intraday" ? "⚡ Intraday" : mode === "longterm" ? "🏦 Long-term" : mode === "future" ? "📅 Future Setup" : "📈 Swing BUY"}
               </span>
-            )}
-            {rec.stocks?.is_undervalued && (
-              <span className="ml-1.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide uppercase shadow-[0_0_8px_rgba(245,158,11,0.15)]">
-                🔥 Under Valued
-              </span>
-            )}
-            <h3 className="mt-2.5 text-xl font-bold text-white">
+              {rec.cap_segment && (
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 capitalize">
+                  {rec.cap_segment}
+                </span>
+              )}
+              {rec.stocks?.is_undervalued && (
+                <span className="rounded bg-amber-950/80 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide uppercase shadow-[0_0_8px_rgba(245,158,11,0.15)]">
+                  🔥 Under Valued
+                </span>
+              )}
+            </div>
+
+            <h3 className={`mt-2.5 text-xl font-bold text-white ${tier === "C" ? "line-through decoration-red-500/40" : ""}`}>
               {rec.symbol.replace(".NS", "").replace(".BO", "")}
             </h3>
             <p className="text-sm text-slate-400">
@@ -116,9 +187,38 @@ export function RecommendationCard({ rec, userId: propUserId }: RecommendationCa
               <span className="ml-1 text-slate-600">· NSE</span>
             </p>
           </div>
-          <div className="text-right">
+
+          {/* Score + Tier Badge */}
+          <div className="text-right flex flex-col items-end gap-1.5">
             <p className={`text-2xl font-black tracking-tight ${style.text}`}>{rec.composite_score}</p>
             <p className="text-xs text-slate-500 font-medium">composite</p>
+
+            {/* Confidence Tier Badge */}
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase border ${tierCfg.bgClass} ${tierCfg.textClass} ${tierCfg.borderClass} ${tierCfg.glowClass}`}
+              title={`Confidence Tier: ${tierCfg.label} (score ${rec.composite_score})`}
+            >
+              <span>{tierCfg.icon}</span>
+              {tierCfg.label}
+            </span>
+
+            {/* Brain Approved Badge */}
+            {isBrainApproved && (
+              <span
+                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase bg-cyan-500/10 text-cyan-300 border border-cyan-500/25"
+                title={`Self-learning system requires minimum score of ${BRAIN_THRESHOLD} based on rolling win rate`}
+              >
+                🧠 BRAIN OK
+              </span>
+            )}
+            {!isBrainApproved && (
+              <span
+                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase bg-red-500/10 text-red-400 border border-red-500/20"
+                title={`Below self-learning threshold of ${BRAIN_THRESHOLD} — system would filter this signal`}
+              >
+                ⛔ BELOW BAR
+              </span>
+            )}
           </div>
         </div>
 
@@ -198,18 +298,89 @@ export function RecommendationCard({ rec, userId: propUserId }: RecommendationCa
 
         {/* Footer actions */}
         <div className="mt-3.5 flex items-center justify-between border-t border-slate-800/40 pt-2.5">
-          <button
-            onClick={handleOpenBuy}
-            className="px-3.5 py-1.5 bg-emerald-500/10 text-emerald-400 rounded-md border border-emerald-500/25 hover:bg-emerald-500 hover:text-black font-extrabold text-[10px] uppercase transition-all duration-300 flex items-center gap-1 cursor-pointer"
-          >
-            🛒 Buy Stock
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleOpenBuy}
+              className="px-3.5 py-1.5 bg-emerald-500/10 text-emerald-400 rounded-md border border-emerald-500/25 hover:bg-emerald-500 hover:text-black font-extrabold text-[10px] uppercase transition-all duration-300 flex items-center gap-1 cursor-pointer"
+            >
+              🛒 Buy Stock
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowBreakdown((prev) => !prev);
+              }}
+              className="px-2.5 py-1.5 bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-700/60 text-[10px] font-bold transition cursor-pointer"
+            >
+              {showBreakdown ? "Hide Breakdown ▲" : "Why this score? ▼"}
+            </button>
+          </div>
           <span className="text-xxs text-slate-500 flex items-center gap-1.5">
             <span>Target: <span className="font-medium text-slate-400">{rec.trade_date}</span></span>
             <span>·</span>
             <span>AI Conf: <strong className="text-slate-300 font-semibold">{(rec.ai_confidence * 100).toFixed(0)}%</strong></span>
           </span>
         </div>
+
+        {/* Expandable Confidence Breakdown Panel */}
+        {showBreakdown && (
+          <div
+            className="mt-3 rounded-lg bg-slate-950/80 p-3.5 border border-slate-800 text-xs space-y-2.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-bold text-slate-300 text-[11px] uppercase tracking-wider mb-1">🔍 Score Explanation Engine</p>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-medium">Trend Alignment</span>
+                <span className="font-bold text-slate-200">{(rec.trend_score ?? 50).toFixed(0)} / 100</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: `${Math.min(100, rec.trend_score ?? 50)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-medium">Technical Conviction</span>
+                <span className="font-bold text-slate-200">{(rec.technical_score ?? 50).toFixed(0)} / 100</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-sky-500 rounded-full"
+                  style={{ width: `${Math.min(100, rec.technical_score ?? 50)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-medium">News & Macro Sentiment</span>
+                <span className="font-bold text-slate-200">{(rec.news_score ?? 50).toFixed(0)} / 100</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-purple-500 rounded-full"
+                  style={{ width: `${Math.min(100, rec.news_score ?? 50)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-medium">Self-Learning Threshold Check</span>
+                <span className={`font-bold ${isBrainApproved ? "text-cyan-400" : "text-red-400"}`}>
+                  {isBrainApproved ? "PASS (≥85)" : "BELOW BAR (<85)"}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </Link>
 
       <BuyStockModal

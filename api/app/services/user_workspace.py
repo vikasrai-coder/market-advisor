@@ -752,3 +752,72 @@ def update_portfolio_thresholds(
     return False
 
 
+def get_user_accuracy_stats(user_id: str) -> Dict[str, Any]:
+    """Calculate personal trading accuracy stats for a user based on closed passbook transactions."""
+    passbook = get_user_passbook(user_id)
+    sell_entries = [p for p in passbook if p.get("action") == "SELL"]
+
+    total_trades = len(sell_entries)
+    if total_trades == 0:
+        return {
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": None,
+            "total_pnl": 0.0,
+            "avg_return_pct": 0.0,
+            "best_trade": None,
+            "worst_trade": None,
+            "system_win_rate": None,
+        }
+
+    wins = 0
+    losses = 0
+    total_pnl = 0.0
+    best_trade = None
+    worst_trade = None
+
+    for entry in sell_entries:
+        pnl = float(entry.get("profit_loss") or 0.0)
+        total_pnl += pnl
+
+        if pnl >= 0:
+            wins += 1
+        else:
+            losses += 1
+
+        if best_trade is None or pnl > float(best_trade.get("profit_loss") or 0.0):
+            best_trade = entry
+        if worst_trade is None or pnl < float(worst_trade.get("profit_loss") or 0.0):
+            worst_trade = entry
+
+    win_rate = round(wins / total_trades, 3)
+
+    # Get system win rate for comparison
+    system_win_rate = None
+    try:
+        from app.services.loss_analyzer import load_learned_adjustments
+        learned = load_learned_adjustments()
+        system_win_rate = learned.get("overall_win_rate")
+    except Exception:
+        pass
+
+    return {
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "total_pnl": round(total_pnl, 2),
+        "best_trade": {
+            "symbol": best_trade.get("display_symbol") if best_trade else None,
+            "pnl": float(best_trade.get("profit_loss") or 0) if best_trade else 0,
+        } if best_trade else None,
+        "worst_trade": {
+            "symbol": worst_trade.get("display_symbol") if worst_trade else None,
+            "pnl": float(worst_trade.get("profit_loss") or 0) if worst_trade else 0,
+        } if worst_trade else None,
+        "system_win_rate": system_win_rate,
+    }
+
+
+

@@ -1,15 +1,26 @@
 {
-  "generated_at": "2026-06-07T14:28:59.865639",
-  "overall_win_rate": 0.333,
-  "sample_size": 3,
+  "generated_at": "2026-07-20T17:43:58.539080",
+  "overall_win_rate": 0.345,
+  "sample_size": 206,
   "suppressed_sectors": [],
   "suppressed_trade_modes": [],
   "min_composite_score_override": 85,
   "sector_win_rates": {
-    "Real Estate": 1.0
+    "Healthcare": 1.0,
+    "Energy": 1.0,
+    "Financial Services": 1.0,
+    "Consumer Cyclical": 1.0,
+    "Industrials": 1.0,
+    "Consumer Defensive": 1.0,
+    "Communication Services": 1.0,
+    "Real Estate": 1.0,
+    "Basic Materials": 1.0,
+    "Utilities": 1.0,
+    "Technology": 1.0
   },
   "mode_win_rates": {
-    "intraday": 1.0
+    "intraday": 1.0,
+    "swing": 1.0
   },
-  "systemic_warning": "Overall 30d win rate is extremely low (33.3%). Threshold raised to 85."
+  "systemic_warning": "Overall 30d win rate is extremely low (34.5%). Threshold raised to 85."
 }

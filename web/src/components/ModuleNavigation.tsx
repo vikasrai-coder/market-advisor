@@ -12,6 +12,7 @@ import {
   LockOutlined,
   ThunderboltOutlined,
   PartitionOutlined,
+  ExperimentOutlined,
 } from "@ant-design/icons";
 
 type ModuleTab =
@@ -24,6 +25,7 @@ type ModuleTab =
   | "alpha"
   | "institutional"
   | "mindmap"
+  | "learning"
   | "admin";
 
 interface ModuleNavigationProps {
@@ -48,6 +50,7 @@ export function ModuleNavigation({
   ];
 
   if (isAdminMode) {
+    items.push({ id: "learning", label: "🧠 BRAIN", icon: <ExperimentOutlined /> });
     items.push({ id: "alpha", label: "⚡ ALPHA", icon: <ThunderboltOutlined /> });
     items.push({ id: "mindmap", label: "MIND MAP", icon: <PartitionOutlined /> });
     items.push({ id: "admin", label: "ADMIN", icon: <LockOutlined /> });

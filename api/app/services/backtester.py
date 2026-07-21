@@ -331,6 +331,27 @@ def run_backtest_simulation(
     return res_data
 
 
+def get_backtest_history(limit: int = 20) -> list[dict[str, Any]]:
+    """Retrieve history of past backtest runs from Supabase."""
+    from app.services.supabase_store import get_client
+    client = get_client()
+    if not client:
+        return []
+    try:
+        res = (
+            client.table("backtest_runs")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        logger.error(f"Error fetching backtest history: {exc}")
+        return []
+
+
+
 def _fetch_history_up_to(symbol: str, end_date: date, mode: str) -> pd.DataFrame:
     """Fetch lookback historical price data up to end_date."""
     cfg = get_config(mode)

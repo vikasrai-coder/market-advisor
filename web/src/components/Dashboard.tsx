@@ -22,6 +22,7 @@ import ChatbotAdvisor from "./ChatbotAdvisor";
 import PennyScans from "./PennyScans";
 import AlphaAlerts from "./AlphaAlerts";
 import InstitutionalScanner from "./InstitutionalScanner";
+import LearningDashboard from "./LearningDashboard";
 import { KPIDashboard } from "./KPIDashboard";
 import { ModuleNavigation } from "./ModuleNavigation";
 import { createClient } from "@/lib/supabase/client";
@@ -38,7 +39,7 @@ type PermissionSet = {
 };
 
 type SessionUser = { id: string; email: string; role: string };
-type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha" | "institutional" | "mindmap";
+type DashboardTab = "scans" | "signals" | "backtest" | "portfolio" | "admin" | "chatbot" | "pennyscans" | "alpha" | "institutional" | "mindmap" | "learning";
 
 const DEFAULT_PERMISSIONS: PermissionSet = {
   can_view_charts: false,
@@ -100,7 +101,7 @@ export function Dashboard() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as DashboardTab;
-      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "institutional", "admin", "mindmap"].includes(tab)) {
+      if (tab && ["scans", "signals", "backtest", "portfolio", "chatbot", "pennyscans", "alpha", "institutional", "admin", "mindmap", "learning"].includes(tab)) {
         setActiveTab(tab);
       }
 
@@ -314,6 +315,8 @@ export function Dashboard() {
 
       {activeTab === "admin" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AdminDashboard onImpersonate={handleImpersonateUser} />
+      ) : activeTab === "learning" && sessionUser?.role === "admin" && !impersonatedEmail ? (
+        <LearningDashboard />
       ) : activeTab === "alpha" && sessionUser?.role === "admin" && !impersonatedEmail ? (
         <AlphaAlerts userId={impersonatedId || sessionUser?.id || "default-trader-admin"} />
       ) : activeTab === "pennyscans" && sessionUser?.role === "admin" && !impersonatedEmail ? (

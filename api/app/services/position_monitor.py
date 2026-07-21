@@ -257,3 +257,84 @@ def check_position_health(
         "warning_count": len(warnings),
         "high_severity_count": len(high_warnings),
     }
+
+
+def get_portfolio_rebalance_suggestions(user_id: str) -> dict[str, Any]:
+    """Scan user holdings for deteriorating positions and suggest high-conviction replacements."""
+    from app.services.user_workspace import getUserPortfolio
+    from app.services.supabase_store import get_client
+
+    portfolio_data = getUserPortfolio(user_id)
+    holdings = portfolio_data.get("holdings", [])
+
+    rebalance_items = []
+    client = get_client()
+
+    # Pre-fetch top recommendations for replacements
+    top_recs = []
+    if client:
+        try:
+            res = (
+                client.table("recommendations")
+                .select("symbol, composite_score, target_price, stop_loss, reasoning, trade_mode, stocks(sector)")
+                .gte("composite_score", 80)
+                .order("composite_score", desc=True)
+                .limit(10)
+                .execute()
+            )
+            top_recs = res.data or []
+        except Exception:
+            pass
+
+    for h in holdings:
+        sym = h.get("symbol")
+        pnl_pct = float(h.get("pnl_pct") or 0.0)
+        current_price = float(h.get("current_price") or h.get("buy_price") or 100)
+
+        # Quick check for deteriorating positions
+        health = "healthy"
+        warnings_list = []
+        if pnl_pct < -8.0:
+            health = "exit_now"
+            warnings_list.append("Position down over 8% — severe drawdown warning")
+        elif pnl_pct < -4.0:
+            health = "caution"
+            warnings_list.append("Position down over 4% — trend weakening")
+
+        # Find replacement candidates if unhealthy
+        replacements = []
+        if health in ("caution", "exit_now") and top_recs:
+            for r in top_recs:
+                if r.get("symbol") != sym and len(replacements) < 2:
+                    replacements.append({
+                        "symbol": r.get("symbol"),
+                        "display_symbol": r.get("symbol", "").replace(".NS", ""),
+                        "composite_score": float(r.get("composite_score") or 80),
+                        "target_price": float(r.get("target_price") or 0),
+                        "stop_loss": float(r.get("stop_loss") or 0),
+                        "reasoning": r.get("reasoning", "")[:100] + "...",
+                    })
+
+        rebalance_items.append({
+            "symbol": sym,
+            "display_symbol": h.get("display_symbol", sym),
+            "shares": h.get("shares"),
+            "buy_price": h.get("buy_price"),
+            "current_price": current_price,
+            "current_value": h.get("current_value"),
+            "pnl": h.get("pnl"),
+            "pnl_pct": pnl_pct,
+            "health": health,
+            "warnings": warnings_list,
+            "replacement_picks": replacements,
+        })
+
+    unhealthy_count = sum(1 for item in rebalance_items if item["health"] in ("caution", "exit_now"))
+
+    return {
+        "user_id": user_id,
+        "total_holdings": len(holdings),
+        "unhealthy_count": unhealthy_count,
+        "items": rebalance_items,
+    }
+
