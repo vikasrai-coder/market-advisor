@@ -1574,13 +1574,13 @@ def institutional_scan(refresh: bool = False):
     """Run the 8-pillar institutional scanner across all watchlist stocks.
 
     Returns cached scan results if fresh (within 30 mins) and refresh is False.
-    Otherwise, starts a background job and returns the job ID.
+    Otherwise, starts a background job (or runs synchronously on Vercel).
     """
     try:
-        from app.services.institutional_scorer import get_cached_institutional_scan
+        from app.services.institutional_scorer import get_cached_institutional_scan, run_institutional_scan
         from app import institutional_jobs
         
-        # 1. Try loading from cache first (for both refresh and non-refresh)
+        # 1. Try loading from cache first if refresh is not forced
         cached_result = get_cached_institutional_scan()
         if cached_result and not refresh:
             return {
@@ -1589,7 +1589,17 @@ def institutional_scan(refresh: bool = False):
                 **cached_result,
             }
 
-        # 2. Check for already running job
+        # 2. Vercel Serverless environment: run synchronously to prevent background thread termination
+        if IS_VERCEL:
+            result = run_institutional_scan(force_refresh=refresh)
+            return {
+                "status": "success",
+                "job_id": "vercel-sync",
+                "message": f"Institutional scan completed synchronously — {result.get('summary', {}).get('total_results', 0)} stocks scored.",
+                **result,
+            }
+
+        # 3. Check for already running job
         running_job = institutional_jobs.get_running_job()
         if running_job:
             return {
@@ -1598,7 +1608,7 @@ def institutional_scan(refresh: bool = False):
                 "message": "Institutional scan is already running.",
             }
 
-        # 3. If not refresh, check for recently completed job results first
+        # 4. If not refresh, check for recently completed job results first
         if not refresh:
             last_completed = institutional_jobs.get_last_completed_job()
             if last_completed and last_completed.get("result"):
@@ -1615,7 +1625,7 @@ def institutional_scan(refresh: bool = False):
                 "alerts": [],
             }
 
-        # 4. Refresh requested → start a new background job
+        # 5. Refresh requested → start a new background job locally
         job_id = institutional_jobs.start_job()
         return {
             "status": "running",
@@ -1630,9 +1640,28 @@ def institutional_scan(refresh: bool = False):
 def institutional_scan_status(job_id: str):
     """Retrieve the status and results of a background institutional scan job."""
     from app import institutional_jobs
+    if IS_VERCEL or job_id == "vercel-sync":
+        last = institutional_jobs.get_last_completed_job()
+        if last and last.get("result"):
+            return last
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "progress": 100,
+            "message": "Institutional scan complete",
+        }
+
     job = institutional_jobs.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        last = institutional_jobs.get_last_completed_job()
+        if last and last.get("result"):
+            return last
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "progress": 100,
+            "message": "Scan completed or finished.",
+        }
     return job
 
 

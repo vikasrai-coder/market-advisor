@@ -375,16 +375,34 @@ export default function InstitutionalScanner() {
     pollingRef.current = true;
     try {
       let completed = false;
-      while (!completed) {
+      let retries = 0;
+      while (!completed && retries < 10) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const job = await getInstitutionalScanStatus(jobId);
-        if (job.status === "completed" && job.result) {
-          setScanData(job.result);
-          completed = true;
-        } else if (job.status === "failed") {
-          throw new Error(job.error || "Scan failed");
-        } else if (job.message) {
-          setJobStatus(job.message);
+        try {
+          const job = await getInstitutionalScanStatus(jobId);
+          if (job.status === "completed" && job.result) {
+            setScanData(job.result);
+            completed = true;
+          } else if (job.status === "completed") {
+            // Job marked completed but result missing in memory — try loading cache
+            const cacheRes = await runInstitutionalScan(false);
+            if (cacheRes.results) setScanData(cacheRes);
+            completed = true;
+          } else if (job.status === "failed") {
+            throw new Error(job.error || "Scan failed");
+          } else if (job.message) {
+            setJobStatus(job.message);
+          }
+        } catch (pollErr: any) {
+          retries++;
+          // If status endpoint returns 404/error (Vercel cold start), try fetching cache
+          const cacheRes = await runInstitutionalScan(false).catch(() => null);
+          if (cacheRes && cacheRes.results && cacheRes.results.length > 0) {
+            setScanData(cacheRes);
+            completed = true;
+          } else if (retries >= 3) {
+            completed = true; // Stop infinite loop after 3 failed retries
+          }
         }
       }
     } finally {
